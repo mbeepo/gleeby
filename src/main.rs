@@ -129,12 +129,19 @@ impl PaletteSelector {
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-    pub struct ObjAttributeFlags: u32 {
+    pub struct ObjAttributeFlags: u8 {
         const BG_PRIORITY   = 0b10000000;
         const Y_FLIP        = 0b01000000;
         const X_FLIP        = 0b00100000;
         const DMG_PALETTE1  = 0b00010000;
         const CGB_BANK1     = 0b00001000;
+    }
+}
+
+impl From<ObjAttributes> for u8 {
+    fn from(value: ObjAttributes) -> Self {
+        let palette: u8 = value.cgb_palette.into();
+        value.flags.bits() | palette
     }
 }
 
@@ -216,11 +223,20 @@ impl Tile {
     }
 }
 
+pub type TileIdx = u8;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sprite {
     pub pos: Pos2,
-    pub tile: Tile,
+    // pub tile: Tile,
+    pub tile: TileIdx,
     pub attr: ObjAttributes,
+}
+
+impl Sprite {
+    pub fn unpack(&self) -> [u8; 4] {
+        [self.pos.y, self.pos.x, self.tile as u8, self.attr.into()]
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -293,11 +309,27 @@ pub enum TilemapSelector {
 
 impl TilemapSelector {
     pub fn from_idx(&self, idx: u8) -> u16 {
+        let base = match self {
+            Self::Tilemap9800 => 0x9800,
+            Self::Tilemap9C00 => 0x9c00,
+        };
+        base + idx as u16
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TiledataSelector {
+    Tiledata8000,
+    Tiledata9000,
+}
+
+impl TiledataSelector {
+    pub fn from_idx(&self, idx: u8) -> u16 {
         match self {
-            Self::Tilemap9800 => {
+            Self::Tiledata8000 => {
                 0x9800 + idx as u16 * 16
             }
-            Self::Tilemap9C00 => {
+            Self::Tiledata9000 => {
                 let offset = idx as i8 as i16 * 16;
                 0x9c00_u16.wrapping_add(offset as u16)
             }
@@ -306,8 +338,19 @@ impl TilemapSelector {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TileSelector {
+    pub tilemap: TilemapSelector,
+    pub idx: u8,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ResourceError {
     PaletteMissing,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SpriteError {
+    IndexOutOfRange,
 }
 
 pub type Addr = u16;
@@ -366,12 +409,12 @@ impl<'a> Cgb<'a> {
         self.output.extend(out);
     }
 
-    pub fn set_tile_data(&mut self, idx: u8, data: Tile) -> Result<(), ResourceError> {
+    pub fn set_tile_data(&mut self, idx: TileSelector, data: Tile) -> Result<(), ResourceError> {
         use Instruction::*;
         use Register::*;
         use RegisterPair::*;
 
-        let addr = self.tilemap.from_idx(idx);
+        let addr = idx.tilemap.from_idx(idx.idx);
         let mut out: Vec<Block> = Vec::with_capacity(9);
         
         out.push(Block::Basic(BasicBlock::from(vec![
@@ -386,14 +429,35 @@ impl<'a> Cgb<'a> {
             ])));
         }
 
+
+
         self.output.extend(out);
         Ok(())
     }
 
     pub fn set_tilemap<F>(&mut self, selector: TilemapSelector, setter: F) 
-        where F: Fn(u8, u8) -> Tile
+        // where F: Fn(u8, u8) -> Tile
+        where F: Fn(u8, u8) -> TileIdx
     {
+        for x in 0..32 {
+            for y in 0..32 {
+                let idx = setter(x, y);
+                // let palette = self.get_palette(tile.colors);
+                let palette = CgbPalette::Palette0;
+                let addr = self.tilemap.from_idx(idx);
 
+            }
+        }
+    }
+
+    pub fn set_sprite(&mut self, sprite: Sprite, idx: u8) -> Result<(), SpriteError> {
+        if idx > 40 {
+            return Err(SpriteError::IndexOutOfRange);
+        }
+
+        
+
+        Ok(())
     }
 
     fn get_palette(&self, colors: [Color; 4]) -> Result<CgbPalette, ResourceError> {
@@ -405,6 +469,9 @@ impl<'a> Cgb<'a> {
             }
         }).ok_or(ResourceError::PaletteMissing)
     }
+
+    // fn get_tile(&self, pixels: [u8; 16]) -> Result<TileSelector, ResourceError> {
+    // }
 
     fn const_alloc(&'a mut self, data: &'a [u8], label: &str) -> Result<Addr, ()> {
         let len = data.len();
@@ -433,11 +500,11 @@ fn main() {
     ]).expect("Someone did a silly >:#");
 
     sys.set_palette(CgbPalette::Palette0, colors);
-    sys.set_tile_data(1, smiley).unwrap();
+    sys.set_tile_data(TileSelector { tilemap: sys.tilemap, idx: 1 }, smiley).unwrap();
 
     dbg!(sys);
 
-    let sprite = Sprite { pos: pos2(0x20, 0x20), tile: smiley, attr: ObjAttributes::default() };
+    let sprite = Sprite { pos: pos2(0x20, 0x20), tile: 1, attr: ObjAttributes::default() };
 
     // sys.set_tilemap(TilemapSelector::Tilemap9800, |x, y| {
     //     bg
