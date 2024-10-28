@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io::Write, ops::BitOr, os::windows::fs::FileExt};
+use std::{collections::HashMap, fs::File, io::{self, Write}, ops::BitOr, os::windows::fs::FileExt};
 
 use bitflags::bitflags;
 
@@ -231,22 +231,22 @@ impl BitOr<Color> for Color {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tile {
-    pub colors: [Color; 4],
+    // pub colors: [Color; 4],
     pub pixel_data: [TileRow; 8],
 }
 
 impl Tile {
-    pub fn new(colors: [Color; 4], pixels: [[PaletteColor; 8]; 8]) -> Self {
+    pub fn new(pixels: [[PaletteColor; 8]; 8]) -> Self {
         // `pixels` has 8 top level elements so this will always result in an 8-element collection
         let rows: [TileRow; 8] = pixels.into_iter().map(|row| row.into()).take(8).collect::<Vec<TileRow>>().try_into().unwrap();
 
         Self {
-            colors,
+            // colors,
             pixel_data: rows,
         }
     }
 
-    pub fn try_from_bytes(colors: [Color; 4], pixels: [[u8; 8]; 8]) -> Result<Self, ConversionError> {
+    pub fn try_from_bytes(pixels: [[u8; 8]; 8]) -> Result<Self, ConversionError> {
         let mut checked = [[PaletteColor::default(); 8]; 8];
 
         for (y, row) in pixels.iter().enumerate() {
@@ -255,18 +255,18 @@ impl Tile {
             }
         }
 
-        Ok(Self::new(colors, checked))
+        // Ok(Self::new(colors, checked))
+        Ok(Self::new(checked))
     }
 
-    pub fn flat(color: Color) -> Self {
-        let colors = [color, color, color, color];
-        let row = TileRow::flat(color!(0));
+    pub fn flat(color: PaletteColor) -> Self {
+        let row = TileRow::flat(color);
         let pixel_data = [
             row, row, row, row,
             row, row, row, row
         ];
 
-        Self { colors, pixel_data }
+        Self { pixel_data }
     }
 
     pub fn as_bytes(&self) -> [u8; 16] {
@@ -630,13 +630,27 @@ impl<'a> Cgb<'a> {
     fn push(&mut self, block: Block) {
         self.output.push(block);
     }
+
+    fn save(&self, file: File) -> io::Result<()>{
+        // set CGB mode
+        file.seek_write(&[0x80], 0x143)?;
+    
+        // jump to main code
+        let trampoline: Vec<u8> = Instruction::Jp(0x150).into();
+        file.seek_write(&trampoline, 0x100)?;
+    
+        let output: Vec<u8> = self.output.iter().flat_map(|block| { let out: Vec<u8> = block.into(); out }).collect::<Vec<u8>>();
+        file.seek_write(&output, 0x150)?;
+
+        io::Result::Ok(())
+    }
 }
 
 fn main() {
     let mut sys = Cgb::new();
-    let bg = Tile::flat(Color::BLUE);
     let colors = [Color::BLACK, Color::RED | Color::GREEN, Color::GREEN, Color::BLUE];
-    let smiley = Tile::try_from_bytes(colors, [
+    let flat = Tile::flat(PaletteColor::ColorThree);
+    let smiley = Tile::try_from_bytes([
         [0, 0, 0, 0, 0, 0, 0, 0],
         [0, 1, 1, 1, 1, 1, 1, 0],
         [0, 1, 0, 1, 1, 0, 1, 0],
@@ -650,41 +664,32 @@ fn main() {
 
     sys.set_palette(CgbPalette::PaletteZero, colors);
     sys.write_tile_data(TiledataSelector::Tiledata8000, 1, smiley).unwrap();
-    sys.write_tile_data(TiledataSelector::Tiledata8000, 0, bg).unwrap();
+    sys.write_tile_data(TiledataSelector::Tiledata8000, 2, flat).unwrap();
     sys.set_tilemap(TilemapSelector::Tilemap9800, |x, y| {
         if (x > 8 && x < 12 && y > 8 && y < 12)
         || (y == 10 && (x == 8 || x == 12))
         || (x == 10 && (y == 8 || y == 12)) {
             1
+        } else if (x + y) % 2 == 0 {
+            2
         } else {
             0
         }
     });
+    sys.push((&Instruction::Jr(Condition::Always, -2)).into());
 
-    let mut file = File::create("out.gb").unwrap();
+    let file = File::create("out.gb").unwrap();
 
-    // set CGB mode
-    file.seek_write(&[0x80], 0x143).unwrap();
-
-    // jump to main code
-    let trampoline: Vec<u8> = Instruction::Jp(0x150).into();
-    file.seek_write(&trampoline, 0x100).unwrap();
-
-    let output: Vec<u8> = sys.output.iter().flat_map(|block| { let out: Vec<u8> = block.into(); out }).collect::<Vec<u8>>();
-    file.seek_write(&output, 0x150).unwrap();
-
-    let end: Vec<u8> = Instruction::Jr(Condition::Always, -2).into();
-    file.write(&end).unwrap();
+    sys.save(file).unwrap();
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{Color, PaletteColor, Tile, TileRow};
+    use crate::{PaletteColor, Tile, TileRow};
 
     #[test]
     fn tile_from_u8() {
-        let colors = [Color::BLACK, Color::RED, Color::GREEN, Color::BLUE];
-        let smiley = Tile::try_from_bytes(colors, [
+        let smiley = Tile::try_from_bytes([
             [0, 0, 0, 0, 0, 0, 0, 0],
             [0, 1, 1, 1, 1, 1, 1, 0],
             [0, 1, 0, 1, 1, 0, 1, 0],
@@ -695,7 +700,7 @@ mod tests {
             [0, 0, 0, 0, 0, 0, 0, 0]
         ]).expect("Someone did a silly >:#");
 
-        let target = Tile { colors, pixel_data: [
+        let target = Tile { pixel_data: [
             TileRow { pixel_data: (0x00, 0x00) },
             TileRow { pixel_data: (0x7e, 0x00) },
             TileRow { pixel_data: (0x5a, 0x00) },
@@ -711,9 +716,8 @@ mod tests {
 
     #[test]
     fn tile_from_colors() {
-        let colors = [Color::BLACK, Color::RED, Color::GREEN, Color::BLUE];
         let smiley = {
-            Tile::new(colors, [
+            Tile::new([
                 [ color!(0), color!(0), color!(0), color!(0), color!(0), color!(0), color!(0), color!(0) ],
                 [ color!(0), color!(1), color!(1), color!(1), color!(1), color!(1), color!(1), color!(0) ],
                 [ color!(0), color!(1), color!(0), color!(1), color!(1), color!(0), color!(1), color!(0) ],
@@ -725,7 +729,7 @@ mod tests {
             ])
         };
 
-        let target = Tile { colors, pixel_data: [
+        let target = Tile { pixel_data: [
             TileRow { pixel_data: (0x00, 0x00) },
             TileRow { pixel_data: (0x7e, 0x00) },
             TileRow { pixel_data: (0x5a, 0x00) },
@@ -741,8 +745,7 @@ mod tests {
 
     #[test]
     fn pandocs_example() {
-        let colors = [Color::BLACK, Color::DARK_GREY, Color::LIGHT_GREY, Color::WHITE];
-        let tile = Tile::try_from_bytes(colors, [
+        let tile = Tile::try_from_bytes([
             [0, 2, 3, 3, 3, 3, 2, 0],
             [0, 3, 0, 0, 0, 0, 3, 0],
             [0, 3, 0, 0, 0, 0, 3, 0],
