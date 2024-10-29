@@ -1,4 +1,8 @@
+use std::default;
+
 use crate::cpu::instructions::{Condition, Instruction};
+
+pub mod cgb;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct BasicBlock {
@@ -46,6 +50,12 @@ pub enum Block {
     Basic(BasicBlock),
     Labeled(String, BasicBlock),
     Loop(Loop),
+}
+
+impl Default for Block {
+    fn default() -> Self {
+        Self::Basic(BasicBlock { instructions: Vec::new() })
+    }
 }
 
 impl From<&Instruction> for Block {

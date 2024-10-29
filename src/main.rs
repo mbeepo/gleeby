@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, io, os::windows::fs::FileExt};
+use std::fs::File;
 
 use gleeby::{cpu::instructions::{Condition, Instruction}, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::Tile, TiledataSelector, TilemapSelector}, Cgb};
 

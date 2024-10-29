@@ -39,7 +39,6 @@ pub fn pos2(x: u8, y: u8) -> Pos2 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sprite {
     pub pos: Pos2,
-    // pub tile: Tile,
     pub tile: TileIdx,
     pub attr: ObjAttributes,
 }
