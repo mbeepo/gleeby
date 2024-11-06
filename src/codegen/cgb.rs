@@ -1,154 +1,167 @@
-use std::{collections::HashMap, fs::File, io, os::windows::fs::FileExt};
+use std::io::{Seek, Write};
+use std::{collections::HashMap, fs::File, io};
 
-use super::{BasicBlock, Block};
-use crate::cpu::{instructions::Instruction, Register, RegisterPair};
-use crate::memory::{Addr, IoReg};
-use crate::ppu::objects::Sprite;
-use crate::ppu::{objects::SpriteIdx, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector};
+use super::assembler::Context;
+use super::block::Block;
+use super::variables::IdInner;
+use super::{Assembler, BasicBlock, LoopBlock, LoopCondition, MacroAssembler};
+use crate::cpu::instructions::Instruction;
+use crate::memory::Addr;
+use crate::ppu::{palettes::Color, TilemapSelector};
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct InterruptHandlers {
     
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct ConstAllocator {
+    pub next_const: Addr,
+    pub max_const: Addr,
+    pub next_var: Addr,
+    pub max_var: Addr,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Cgb<'a> {
+pub struct Cgb {
     output: Vec<Block>,
     labels: HashMap<String, Addr>,
     palettes: [[Color; 4]; 8],
-    next_const: Addr,
-    consts: Vec<(Addr, Box<&'a [u8]>)>,
+    consts: Vec<(Addr, Vec<u8>)>,
     tilemap: TilemapSelector,
-    working_block: Option<Block>,
-    working_label: Option<String>,
     handlers: InterruptHandlers,
+    allocator: ConstAllocator,
+    next_id: IdInner,
 }
 
-impl<'a> Cgb<'a> {
+impl Cgb {
     pub fn new() -> Self {
-        let mut output: Vec<Block> = Vec::new();
+        let output: Vec<Block> = Vec::with_capacity(4);
+        let allocator = ConstAllocator {
+            next_const: 0x7800,
+            max_const: 0x7fff,
+            next_var: 0xc000,
+            max_var: 0xcfff,
+        };
 
         Self {
             output,
             labels: HashMap::new(),
             palettes: [[Color::WHITE; 4]; 8],
-            next_const: 0xc000,
+            allocator,
             consts: Vec::new(),
             tilemap: TilemapSelector::Tilemap9800,
-            working_block: None,
-            working_label: None,
-            handlers: InterruptHandlers::default(),
+            handlers: Default::default(),
+            next_id: Default::default(),
         }
     }
 
-    pub fn set_palette(&mut self, palette: CgbPalette, colors: [Color; 4]) {
-        use Instruction::*;
-        use Register::*;
-        use RegisterPair::*;
-
-        let mut out: Vec<Block> = Vec::with_capacity(5);
-        out.push(Block::Basic(BasicBlock::from(vec![
-            // Select palette to change
-            LdR16Imm(HL, IoReg::Bcps as u16),
-            LdR8Imm(A, PaletteSelector::new(true, palette).into()),
-            LdToHlAdd,
-        ])));
-
-        for color in colors {
-            let color = color.0.to_le_bytes();
-            out.push(Block::Basic(BasicBlock::from(vec![
-                LdHlImm(color[1].into()),
-                LdHlImm(color[0].into()),
-            ])));
-        }
-
-        let idx: usize = palette.into();
-        self.palettes[idx] = colors;
-        self.output.extend(out);
-    }
-
-    pub fn write_tile_data(&mut self, area: TiledataSelector, idx: TileIdx, data: Tile) {
-        use Instruction::*;
-        use Register::*;
-        use RegisterPair::*;
-
-        let addr = area.from_idx(idx);
-        let mut out: Vec<Block> = Vec::with_capacity(9);
-        
-        out.push(Block::Basic(BasicBlock::from(
-            LdR16Imm(HL, addr)
-        )));
-
-        for byte in data.as_bytes() {
-            out.push(Block::Basic(BasicBlock::from(vec![
-                LdR8Imm(A, byte),
-                LdToHlAdd,
-            ])));
-        }
-
-        self.output.extend(out);
-    }
-
-    pub fn set_tilemap<F>(&mut self, selector: TilemapSelector, setter: F) 
-        // where F: Fn(u8, u8) -> Tile
-        where F: Fn(u8, u8) -> TileIdx
-    {
-        use Instruction::*;
-        use Register::*;
-        use RegisterPair::*;
-
-        let mut out: Vec<Block> = Vec::with_capacity(32 * 32);
-
-        out.push(Block::Basic(BasicBlock::from(
-            LdR16Imm(HL, selector.base())
-        )));
-
-        for x in 0..32 {
-            for y in 0..32 {
-                let idx = setter(x, y);
-                // let palette = self.get_palette(tile.colors);
-                let palette = CgbPalette::_0;
-                let addr = self.tilemap.from_idx(idx);   
-
-                out.push(Block::Basic(BasicBlock::from(vec![
-                    LdR8Imm(A, idx),
-                    LdToHlAdd,
-                ])));
-            }
-        }
-
-        self.output.extend(out);
-    }
-
-    pub fn set_sprite(&mut self, sprite: Sprite, idx: SpriteIdx) {
-        todo!()
-    }
-
-    pub fn const_alloc(&'a mut self, data: &'a [u8], label: &str) -> Result<Addr, ()> {
-        let len = data.len();
-        self.consts.push((self.next_const, Box::new(data)));
-        let addr = self.next_const;
-        self.next_const += len as u16;
-        self.labels.insert(label.to_owned(), addr);
-
-        Ok(addr)
-    }
-
-    pub fn push(&mut self, block: Block) {
-        self.output.push(block);
-    }
-
-    pub fn save(&self, file: File) -> io::Result<()>{
+    pub fn save(&self, file: &mut File) -> io::Result<()>{
         // set CGB mode
-        file.seek_write(&[0x80], 0x143)?;
+        file.seek(io::SeekFrom::Start(0x143))?;
+        file.write_all(&[0x80])?;
     
         // jump to main code
         let trampoline: Vec<u8> = Instruction::Jp(0x150).into();
-        file.seek_write(&trampoline, 0x100)?;
+        file.seek(io::SeekFrom::Start(0x100))?;
+        file.write_all(&trampoline)?;
     
         let output: Vec<u8> = self.output.iter().flat_map(|block| { let out: Vec<u8> = block.into(); out }).collect::<Vec<u8>>();
-        file.seek_write(&output, 0x150)?;
+        file.seek(io::SeekFrom::Start(0x150))?;
+        file.write_all(&output)?;
+
+        for (addr, bytes) in &self.consts {
+            file.seek(io::SeekFrom::Start(*addr as u64))?;
+            file.write_all(&bytes)?;
+        }
 
         io::Result::Ok(())
+    }
+}
+
+impl Assembler for Cgb {
+    fn push_instruction(&mut self, instruction: Instruction) {
+        self.push_buf(&[instruction]);
+    }
+
+    fn push_buf(&mut self, buf: &[Instruction]) {
+        if let Some(Block::Raw(block)) = self.output.last_mut() {
+            block.0.extend(buf);
+        } else {
+            let mut new: Vec<Instruction> = Vec::with_capacity(buf.len() + 2);
+            new.extend(buf);
+            self.output.push(new.into());
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.output.iter().fold(0, |acc, block| acc + block.len())
+    }
+}
+
+impl MacroAssembler for Cgb {
+    type AllocError = ConstAllocError;
+
+    /// [BasicBlock] builder
+    fn basic_block<F>(&mut self, inner: F) -> &mut Self
+            where F: Fn(&mut BasicBlock) {
+        let mut block: BasicBlock = Vec::with_capacity(4).into();
+        inner(&mut block);
+
+        let ctx = self.new_ctx();
+        block.ctx = ctx;
+        self.output.push(block.into());
+
+        self
+    }
+
+    /// [Loop] builder
+    fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
+           where F: Fn(&mut LoopBlock) {
+        let mut block: LoopBlock = LoopBlock::new(condition, Vec::with_capacity(4).into());
+        inner(&mut block);
+
+        let ctx = self.new_ctx();
+        block.ctx = ctx;
+        self.output.push(block.into());
+
+        self
+    }
+
+    fn new_var<T>(&mut self, var: T) -> super::Variable
+           where T: super::assembler::AsBuf {
+        todo!()
+    }
+
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, Self::AllocError> {
+        let addr = self.allocator.new_const(data)?;
+        self.consts.push((addr, data.to_vec()));
+
+        Ok(addr)
+    }
+}
+
+impl Context for Cgb {
+    fn next_id(&self) -> IdInner {
+        self.next_id
+    }
+
+    fn next_id_mut(&mut self) -> &mut IdInner {
+        &mut self.next_id
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstAllocError {
+
+}
+
+impl ConstAllocator {
+    pub fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
+        let len = data.len();
+        let addr = self.next_const;
+        self.next_const += len as u16;
+
+        Ok(addr)
     }
 }

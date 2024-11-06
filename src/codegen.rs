@@ -1,83 +1,27 @@
-use std::default;
-
-use crate::cpu::instructions::{Condition, Instruction};
-
+pub mod assembler;
+pub mod block;
 pub mod cgb;
+pub mod setter;
+pub mod variables;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct BasicBlock {
-    pub instructions: Vec<Instruction>,
-}
+pub use assembler::{
+    Assembler,
+    MacroAssembler,
+};
 
-impl From<Vec<Instruction>> for BasicBlock {
-    fn from(instructions: Vec<Instruction>) -> Self {
-        Self { instructions }
+pub use block::{
+    Block,
+    basic_block::BasicBlock,
+    loop_block::{
+        LoopBlock,
+        LoopCondition,
     }
-}
+};
 
-impl From<Instruction> for BasicBlock {
-    fn from(value: Instruction) -> Self {
-        Self { instructions: vec![value] }
-    }
-}
+pub use variables::{
+    Ctx,
+    Id,
+    Variable
+};
 
-impl From<BasicBlock> for Vec<u8> {
-    fn from(value: BasicBlock) -> Self {
-        value.instructions.iter().flat_map(|&instruction| { let out: Vec<u8> = instruction.into(); out }).collect()
-    }
-}
-
-impl From<&BasicBlock> for Vec<u8> {
-    fn from(value: &BasicBlock) -> Self {
-        value.instructions.iter().flat_map(|&instruction| { let out: Vec<u8> = instruction.into(); out }).collect()
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Loop {
-    pub condition: Condition,
-    pub inner: BasicBlock,
-}
-
-impl Loop {
-    pub fn new(condition: Condition, inner: BasicBlock) -> Self {
-        Self { condition, inner }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Block {
-    Basic(BasicBlock),
-    Labeled(String, BasicBlock),
-    Loop(Loop),
-}
-
-impl Default for Block {
-    fn default() -> Self {
-        Self::Basic(BasicBlock { instructions: Vec::new() })
-    }
-}
-
-impl From<&Instruction> for Block {
-    fn from(value: &Instruction) -> Self {
-        Self::Basic((*value).into())
-    }
-}
-
-impl From<Block> for Vec<u8> {
-    fn from(value: Block) -> Self {
-        match value {
-            Block::Basic(block) => block.into(),
-            _ => unimplemented!()
-        }
-    }
-}
-
-impl From<&Block> for Vec<u8> {
-    fn from(value: &Block) -> Self {
-        match value {
-            Block::Basic(block) => block.into(),
-            _ => unimplemented!()
-        }
-    }
-}
+pub(crate) use variables::IdInner;

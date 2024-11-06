@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use gleeby::{cpu::instructions::{Condition, Instruction}, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::Tile, TiledataSelector, TilemapSelector}, Cgb};
+use gleeby::{codegen::{Assembler, MacroAssembler}, cpu::instructions::Condition, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::Tile, TiledataSelector, TilemapSelector}, Cgb};
 
 fn main() {
     let mut sys = Cgb::new();
@@ -17,10 +17,10 @@ fn main() {
         [0, 0, 0, 0, 0, 0, 0, 0]
     ]).expect("Someone did a silly >:#");
 
-
-    sys.set_palette(CgbPalette::_0, colors);
-    sys.write_tile_data(TiledataSelector::Tiledata8000, 1, smiley);
-    sys.write_tile_data(TiledataSelector::Tiledata8000, 2, flat);
+    sys.disable_lcd_now();
+    sys.set_palette(CgbPalette::_0, colors).unwrap();
+    sys.write_tile_data(TiledataSelector::Tiledata8000, 1, &smiley).unwrap();
+    sys.write_tile_data(TiledataSelector::Tiledata8000, 2, &flat).unwrap();
     sys.set_tilemap(TilemapSelector::Tilemap9800, |x, y| {
         if (x > 8 && x < 12 && y > 8 && y < 12)
         || (y == 10 && (x == 8 || x == 12))
@@ -32,11 +32,12 @@ fn main() {
             0
         }
     });
-    sys.push((&Instruction::Jr(Condition::Always, -2)).into());
+    sys.enable_lcd_now();
+    sys.Jr(Condition::Always, -2);
 
-    let file = File::create("out.gb").unwrap();
+    let mut file = File::create("out.gb").unwrap();
 
-    sys.save(file).unwrap();
+    sys.save(&mut file).unwrap();
 }
 
 #[cfg(test)]

@@ -21,6 +21,8 @@ pub struct Tile {
 }
 
 impl Tile {
+    pub const MEM_SIZE: usize = 16;
+
     pub fn new(pixels: [[PaletteColor; 8]; 8]) -> Self {
         // `pixels` has 8 top level elements so this will always result in an 8-element collection
         let rows: [TileRow; 8] = pixels.into_iter().map(|row| row.into()).take(8).collect::<Vec<TileRow>>().try_into().unwrap();
