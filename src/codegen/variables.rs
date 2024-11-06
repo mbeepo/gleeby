@@ -1,5 +1,7 @@
 use crate::{cpu::{Register, RegisterPair}, memory::Addr};
 
+use super::assembler::AsBuf;
+
 pub(crate) type IdInner = usize;
 
 /// Identifier for variables
@@ -26,8 +28,8 @@ pub enum Variable {
     StaticAddr(Addr),
 }
 
-impl Default for Variable {
-    fn default() -> Self {
+impl Variable {
+    pub fn new() -> Self {
         Self::Dynamic { id: Default::default(), ctx: Default::default() }
     }
 }

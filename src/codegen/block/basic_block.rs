@@ -1,16 +1,19 @@
-use crate::codegen::assembler::Context;
-use crate::codegen::cgb::ConstAllocError;
+use crate::codegen::assembler::{AsBuf, Context};
+use crate::codegen::cgb::{ConstAllocError, ConstAllocator};
 use crate::codegen::{Assembler, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
 use crate::codegen::{Ctx, IdInner, Variable};
 use crate::cpu::instructions::Instruction;
+use crate::memory::Addr;
 
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct BasicBlock {
     next_id: IdInner,
+    allocator: ConstAllocator,
     pub ctx: Ctx,
-    pub variables: Vec<Variable>,
+    pub variables: Vec<(Vec<u8>, Variable)>,
     pub contents: Vec<Block>,
+    pub consts: Vec<(Addr, Vec<u8>)>,
 }
 
 impl From<Vec<Instruction>> for BasicBlock {
@@ -77,17 +80,20 @@ impl MacroAssembler for BasicBlock {
         let ctx = self.new_ctx();
         block.ctx = ctx;
         self.contents.push(block.into());
-
         self
     }
 
     fn new_const(&mut self, data: &[u8]) -> Result<crate::memory::Addr, Self::AllocError> {
-        todo!()
+        let addr = self.allocator.new_const(data)?;
+        self.consts.push((addr, data.to_vec()));
+        Ok(addr)
     }
 
-    fn new_var<T>(&mut self, var: T) -> Variable
-            where T: crate::codegen::assembler::AsBuf {
-        todo!()
+    fn new_var<T>(&mut self, initial: T) -> Variable
+           where T: AsBuf {
+        let var = Variable::Dynamic { id: self.new_id(), ctx: self.new_ctx() };
+        self.variables.push((initial.as_buf(), var));
+        var
     }
 }
 

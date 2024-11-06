@@ -131,7 +131,6 @@ impl From<Instruction> for Vec<u8> {
                     DE => vec![0x11],
                     HL => vec![0x21],
                     SP => vec![0x31],
-                    _ => unimplemented!()
                 };
                 opcode.extend(imm);
                 opcode

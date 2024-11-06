@@ -1,4 +1,4 @@
-use crate::{codegen::{block::raw_block::RawBlock, cgb::ConstAllocError, Assembler, Ctx, MacroAssembler, Variable}, cpu::instructions::{Condition, Instruction}};
+use crate::{codegen::{assembler::AsBuf, block::raw_block::RawBlock, cgb::ConstAllocError, Assembler, Ctx, MacroAssembler, Variable}, cpu::instructions::{Condition, Instruction}};
 
 use super::basic_block::BasicBlock;
 
@@ -50,22 +50,27 @@ impl From<&LoopBlock> for Vec<u8> {
         let jump: Vec<u8> = match value.condition {
             LoopCondition::Native(condition) => {
                 let mut buffer = RawBlock::default();
-                buffer.Jr(condition, block_length as i8 * -1);
+                buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
             LoopCondition::Countdown { counter, end } => {
                 if end == 0 {
                     match counter {
+                        Variable::Dynamic { id, ctx } => {
+                            
+                            
+                            todo!()
+                        }
                         Variable::StaticR8(reg) => {
                             let mut buffer = RawBlock::default();
-                            buffer.DecR8(reg);
+                            buffer.dec_r8(reg);
                             let block_length = block_length + buffer.len();
                             
                             if block_length as isize * -1 < i8::MIN as isize {
                                 todo!("Loop body too big")
                             }
 
-                            buffer.Jr(Condition::NZ, block_length as i8 * -1);
+                            buffer.jr(Condition::NZ, block_length as i8 * -1);
                             buffer
                         }
                         _ => todo!()
@@ -112,7 +117,7 @@ impl MacroAssembler for LoopBlock {
     }
 
     fn new_var<T>(&mut self, initial: T) -> Variable
-            where T: crate::codegen::assembler::AsBuf {
+            where T: AsBuf {
         self.inner.new_var(initial)
     }
 

@@ -1,7 +1,6 @@
 pub mod assembler;
 pub mod block;
 pub mod cgb;
-pub mod setter;
 pub mod variables;
 
 pub use assembler::{

@@ -33,7 +33,7 @@ fn main() {
         }
     });
     sys.enable_lcd_now();
-    sys.Jr(Condition::Always, -2);
+    sys.jr(Condition::Always, -2);
 
     let mut file = File::create("out.gb").unwrap();
 

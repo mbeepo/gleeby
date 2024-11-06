@@ -13,7 +13,12 @@ pub enum Register {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RegisterPair {
-    BC,
-    DE,
-    HL,
+    BC, DE,
+    HL, SP,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StackPair {
+    BC, DE,
+    HL, AF,
 }

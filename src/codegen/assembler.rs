@@ -1,4 +1,4 @@
-use crate::{codegen::block::Block, cpu::{instructions::{Bit, Instruction}, Condition, Register, RegisterPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector}};
+use crate::{cpu::{instructions::{Bit, Instruction}, Condition, Register, RegisterPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector}};
 
 use super::{block::basic_block::BasicBlock, Ctx, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
@@ -10,7 +10,7 @@ pub trait Assembler {
     /// ld r, `[hl]`
     /// 
     /// Load the byte at `[hl]` into `reg`
-    fn LdR8FromHl(&mut self, reg: Register) -> &mut Self {
+    fn ld_r8_from_hl(&mut self, reg: Register) -> &mut Self {
         self.push_instruction(Instruction::LdR8FromHl(reg));
         self
     }
@@ -18,7 +18,7 @@ pub trait Assembler {
     /// ld `[hl]`, r
     /// 
     /// Load the byte in `reg` into `[hl]`
-    fn LdR8ToHl(&mut self, reg: Register) -> &mut Self {
+    fn ld_r8_to_hl(&mut self, reg: Register) -> &mut Self {
         self.push_instruction(Instruction::LdR8ToHl(reg));
         self
     }
@@ -26,7 +26,7 @@ pub trait Assembler {
     /// ld r, n8
     /// 
     /// Load the immediate `imm` into `reg`
-    fn LdR8Imm(&mut self, reg: Register, imm: u8) -> &mut Self {
+    fn ld_r8_imm(&mut self, reg: Register, imm: u8) -> &mut Self {
         self.push_instruction(Instruction::LdR8Imm(reg, imm));
         self
     }
@@ -34,7 +34,7 @@ pub trait Assembler {
     /// ld r, r
     /// 
     /// Load the byte in `src` into `dest`
-    fn LdR8FromR8(&mut self, dest: Register, src: Register) -> &mut Self {
+    fn ld_r8_from_r8(&mut self, dest: Register, src: Register) -> &mut Self {
         self.push_instruction(Instruction::LdR8FromR8(dest, src));
         self
     }
@@ -42,7 +42,7 @@ pub trait Assembler {
     /// ld rr, n16
     /// 
     /// Load the little endian immediate `imm` into `reg`
-    fn LdR16Imm(&mut self, reg_pair: RegisterPair, imm: u16) -> &mut Self {
+    fn ld_r16_imm(&mut self, reg_pair: RegisterPair, imm: u16) -> &mut Self {
         self.push_instruction(Instruction::LdR16Imm(reg_pair, imm));
         self
     }
@@ -50,7 +50,7 @@ pub trait Assembler {
     /// ld a, `[rr]`
     /// 
     /// Load the byte in `[reg]` into `a`
-    fn LdAFromR16(&mut self, reg_pair: RegisterPair) -> &mut Self {
+    fn ld_a_from_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
         self.push_instruction(Instruction::LdAFromR16(reg_pair));
         self
     }
@@ -58,7 +58,7 @@ pub trait Assembler {
     /// ld `[rr]`, a
     /// 
     /// Load the byte in `a` into `[reg]`
-    fn LdAToR16(&mut self, reg_pair: RegisterPair) -> &mut Self {
+    fn ld_a_to_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
         self.push_instruction(Instruction::LdAToR16(reg_pair));
         self
     }
@@ -66,7 +66,7 @@ pub trait Assembler {
     /// jr cc, e8
     /// 
     /// Jump by `offset` bytes if `condition` is true
-    fn Jr(&mut self, condition: Condition, offset: i8) -> &mut Self {
+    fn jr(&mut self, condition: Condition, offset: i8) -> &mut Self {
         self.push_instruction(Instruction::Jr(condition, offset));
         self
     }
@@ -74,7 +74,7 @@ pub trait Assembler {
     /// inc r
     /// 
     /// Increment register `r`
-    fn IncR8(&mut self, reg: Register) -> &mut Self {
+    fn inc_r8(&mut self, reg: Register) -> &mut Self {
         self.push_instruction(Instruction::IncR8(reg));
         self
     }
@@ -82,7 +82,7 @@ pub trait Assembler {
     /// dec r
     /// 
     /// Decrement register `r`
-    fn DecR8(&mut self, reg: Register) -> &mut Self {
+    fn dec_r8(&mut self, reg: Register) -> &mut Self {
         self.push_instruction(Instruction::DecR8(reg));
         self
     }
@@ -90,7 +90,7 @@ pub trait Assembler {
     /// inc rr
     /// 
     /// Increment register pair `rr`
-    fn IncR16(&mut self, reg_pair: RegisterPair) -> &mut Self {
+    fn inc_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
         self.push_instruction(Instruction::IncR16(reg_pair));
         self
     }
@@ -98,7 +98,7 @@ pub trait Assembler {
     /// dec rr
     /// 
     /// Decrement register pair `rr`
-    fn DecR16(&mut self, reg_pair: RegisterPair) -> &mut Self {
+    fn dec_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
         self.push_instruction(Instruction::DecR16(reg_pair));
         self
     }
@@ -106,7 +106,7 @@ pub trait Assembler {
     /// ld [hl+], a
     /// 
     /// Load the byte in `a` into `[hl]`, then increment hl
-    fn LdToHlInc(&mut self) -> &mut Self {
+    fn ld_to_hl_inc(&mut self) -> &mut Self {
         self.push_instruction(Instruction::LdToHlInc);
         self
     }
@@ -114,7 +114,7 @@ pub trait Assembler {
     /// ld [hl-], a
     /// 
     /// Load the byte in `a` into `[hl]`, then decrement hl
-    fn LdToHlDec(&mut self) -> &mut Self {
+    fn ld_to_hl_dec(&mut self) -> &mut Self {
         self.push_instruction(Instruction::LdToHlDec);
         self
     }
@@ -122,7 +122,7 @@ pub trait Assembler {
     /// ld a, [hl+]
     /// 
     /// Load the byte in `[hl]` into `a`, then increment hl
-    fn LdFromHlInc(&mut self) -> &mut Self {
+    fn ld_from_hl_inc(&mut self) -> &mut Self {
         self.push_instruction(Instruction::LdFromHlInc);
         self
     }
@@ -130,7 +130,7 @@ pub trait Assembler {
     /// ld a, [hl-]
     /// 
     /// Load the byte in `[hl]` into `a`, the decrement hl
-    fn LdFromHlDec(&mut self) -> &mut Self {
+    fn ld_from_hl_dec(&mut self) -> &mut Self {
         self.push_instruction(Instruction::LdFromHlDec);
         self
     }
@@ -138,7 +138,7 @@ pub trait Assembler {
     /// ld `[hl]`, n16
     /// 
     /// Load the little endian immediate `imm` into `[hl]`
-    fn LdHlImm(&mut self, imm: u8) -> &mut Self {
+    fn ld_hl_imm(&mut self, imm: u8) -> &mut Self {
         self.push_instruction(Instruction::LdHlImm(imm));
         self
     }
@@ -146,7 +146,7 @@ pub trait Assembler {
     /// ld `[$ff00+imm]`, a
     /// 
     /// Load the byte in `a` into the zero page offset by `imm`
-    fn LdhFromA(&mut self, imm: u8) -> &mut Self {
+    fn ldh_from_a(&mut self, imm: u8) -> &mut Self {
         self.push_instruction(Instruction::LdhFromA(imm));
         self
     }
@@ -154,7 +154,7 @@ pub trait Assembler {
     /// ld a, `[$ff00+imm]`
     /// 
     /// Load the byte in the zero page at offset `imm` into `a`
-    fn LdhToA(&mut self, imm: u8) -> &mut Self {
+    fn ldh_to_a(&mut self, imm: u8) -> &mut Self {
         self.push_instruction(Instruction::LdhToA(imm));
         self
     }
@@ -162,7 +162,7 @@ pub trait Assembler {
     /// jp a16
     /// 
     /// Jump to address `addr`
-    fn Jp(&mut self, addr: u16) -> &mut Self {
+    fn jp(&mut self, addr: u16) -> &mut Self {
         self.push_instruction(Instruction::Jp(addr));
         self
     }
@@ -170,7 +170,7 @@ pub trait Assembler {
     /// bit `bit`, `reg`
     /// 
     /// Tests bit `bit` of `reg, settings the Zero flag if not set
-    fn Bit(&mut self, reg: Register, bit: Bit) -> &mut Self {
+    fn bit(&mut self, reg: Register, bit: Bit) -> &mut Self {
         self.push_instruction(Instruction::Bit(reg, bit));
         self
     }
@@ -178,7 +178,7 @@ pub trait Assembler {
     /// res `bit`, `reg`
     /// 
     /// Resets bit `bit` of `reg`
-    fn Res(&mut self, reg: Register, bit: Bit) -> &mut Self {
+    fn res(&mut self, reg: Register, bit: Bit) -> &mut Self {
         self.push_instruction(Instruction::Res(reg, bit));
         self
     }
@@ -186,7 +186,7 @@ pub trait Assembler {
     /// set `bit`, `reg`
     /// 
     /// Sets bit `bit` of `reg`
-    fn Set(&mut self, reg: Register, bit: Bit) -> &mut Self {
+    fn set(&mut self, reg: Register, bit: Bit) -> &mut Self {
         self.push_instruction(Instruction::Set(reg, bit));
         self
     }
@@ -213,14 +213,14 @@ pub trait MacroAssembler: Assembler {
         let addr = self.new_const(&colors)?;
 
         self.basic_block(|block| {
-            block.LdR16Imm(HL, addr);
-            block.LdR8Imm(B, colors.len() as u8);
-            block.LdR8Imm(A, PaletteSelector::new(true, palette).into());
-            block.LdhFromA(IoReg::Bcps.into());
+            block.ld_r16_imm(HL, addr);
+            // block.ld_r8_imm(B, colors.len() as u8);
+            block.ld_r8_imm(A, PaletteSelector::new(true, palette).into());
+            block.ldh_from_a(IoReg::Bcps.into());
 
-            let counter = Variable::StaticR8(B);
+            let counter = block.new_var(colors.len() as u8);
             block.loop_block(LoopCondition::Countdown { counter, end: 0 }, |block| {
-                block.LdFromHlInc().LdhFromA(IoReg::Bcpd.into());
+                block.ld_from_hl_inc().ldh_from_a(IoReg::Bcpd.into());
             });
         });
 
@@ -231,15 +231,16 @@ pub trait MacroAssembler: Assembler {
         use Register::*;
         use RegisterPair::*;
 
-        self.LdR16Imm(HL, dest);
-        self.LdR16Imm(BC, src);
-        self.LdR8Imm(D, len);
-        let counter = Variable::StaticR8(D);
+        self.ld_r16_imm(HL, dest);
+        self.ld_r16_imm(BC, src);
+        self.ld_r8_imm(D, len);
+        // let counter = Variable::StaticR8(D);
+        let counter = self.new_var(len);
 
         self.loop_block(LoopCondition::Countdown { counter , end: 0 }, |block| {
-            block.LdAFromR16(BC);
-            block.LdToHlInc();
-            block.IncR16(BC);
+            block.ld_a_from_r16(BC);
+            block.ld_to_hl_inc();
+            block.inc_r16(BC);
         });
     }
 
@@ -259,15 +260,15 @@ pub trait MacroAssembler: Assembler {
         use RegisterPair::*;
 
         self.basic_block(|block| {
-            block.LdR16Imm(HL, selector.base());
+            block.ld_r16_imm(HL, selector.base());
 
             // TODO: Roll this up
             for x in 0..32 {
                 for y in 0..32 {
                     let idx = setter(x, y);
     
-                    block.LdR8Imm(A, idx);
-                    block.LdToHlInc();
+                    block.ld_r8_imm(A, idx);
+                    block.ld_to_hl_inc();
                 }
             }
         });
@@ -282,17 +283,17 @@ pub trait MacroAssembler: Assembler {
     /// This should only be called during VBlank: [https://gbdev.io/pandocs/LCDC.html#lcdc7--lcd-enable]
     fn disable_lcd_now(&mut self) {
         self.basic_block(|block| {
-            block.LdhToA(IoReg::Lcdc.into());
-            block.Res(Register::A, Bit::_7);
-            block.LdhFromA(IoReg::Lcdc.into());
+            block.ldh_to_a(IoReg::Lcdc.into());
+            block.res(Register::A, Bit::_7);
+            block.ldh_from_a(IoReg::Lcdc.into());
         });
     }
 
     fn enable_lcd_now(&mut self) {
         self.basic_block(|block| {
-            block.LdhToA(IoReg::Lcdc.into());
-            block.Set(Register::A, Bit::_7);
-            block.LdhFromA(IoReg::Lcdc.into());
+            block.ldh_to_a(IoReg::Lcdc.into());
+            block.set(Register::A, Bit::_7);
+            block.ldh_from_a(IoReg::Lcdc.into());
         });
     }
 }

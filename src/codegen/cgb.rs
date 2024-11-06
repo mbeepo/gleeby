@@ -4,7 +4,7 @@ use std::{collections::HashMap, fs::File, io};
 use super::assembler::Context;
 use super::block::Block;
 use super::variables::IdInner;
-use super::{Assembler, BasicBlock, LoopBlock, LoopCondition, MacroAssembler};
+use super::{Assembler, BasicBlock, LoopBlock, LoopCondition, MacroAssembler, Variable};
 use crate::cpu::instructions::Instruction;
 use crate::memory::Addr;
 use crate::ppu::{palettes::Color, TilemapSelector};
@@ -14,12 +14,39 @@ pub struct InterruptHandlers {
     
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstAllocator {
     pub next_const: Addr,
     pub max_const: Addr,
+    pub const_len: u16,
     pub next_var: Addr,
     pub max_var: Addr,
+    pub var_len: u16,
+}
+
+impl Default for ConstAllocator {
+    fn default() -> Self {
+        Self {
+            next_const: 0,
+            max_const: 0x07ff,
+            const_len: 0,
+            next_var: 0,
+            max_var: 0x0fff,
+            var_len: 0,
+        }
+    }
+}
+
+impl ConstAllocator {
+    pub fn offset_const(&mut self, by: isize) {
+        self.next_const = (self.next_const as isize + by) as Addr;
+        self.max_const = (self.max_const as isize + by) as Addr;
+    }
+
+    pub fn offset_vars(&mut self, by: isize) {
+        self.next_var = (self.next_var as isize + by) as Addr;
+        self.max_var = (self.max_var as isize + by) as Addr;
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -27,32 +54,31 @@ pub struct Cgb {
     output: Vec<Block>,
     labels: HashMap<String, Addr>,
     palettes: [[Color; 4]; 8],
-    consts: Vec<(Addr, Vec<u8>)>,
     tilemap: TilemapSelector,
     handlers: InterruptHandlers,
     allocator: ConstAllocator,
     next_id: IdInner,
+    consts: Vec<(Addr, Vec<u8>)>,
+    variables: Vec<(Vec<u8>, Variable)>,
 }
 
 impl Cgb {
     pub fn new() -> Self {
         let output: Vec<Block> = Vec::with_capacity(4);
-        let allocator = ConstAllocator {
-            next_const: 0x7800,
-            max_const: 0x7fff,
-            next_var: 0xc000,
-            max_var: 0xcfff,
-        };
+        let mut allocator = ConstAllocator::default();
+        allocator.offset_const(0x7800);
+        allocator.offset_vars(0xc000);
 
         Self {
             output,
             labels: HashMap::new(),
             palettes: [[Color::WHITE; 4]; 8],
             allocator,
-            consts: Vec::new(),
             tilemap: TilemapSelector::Tilemap9800,
             handlers: Default::default(),
-            next_id: Default::default(),
+            next_id: 1,
+            consts: Vec::with_capacity(4),
+            variables: Vec::with_capacity(4),
         }
     }
 
@@ -128,9 +154,11 @@ impl MacroAssembler for Cgb {
         self
     }
 
-    fn new_var<T>(&mut self, var: T) -> super::Variable
+    fn new_var<T>(&mut self, initial: T) -> super::Variable
            where T: super::assembler::AsBuf {
-        todo!()
+        let var = Variable::Dynamic { id: self.new_id(), ctx: self.new_ctx() };
+        self.variables.push((initial.as_buf(), var));
+        var
     }
 
     fn new_const(&mut self, data: &[u8]) -> Result<Addr, Self::AllocError> {
