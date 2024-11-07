@@ -4,7 +4,7 @@ use raw_block::RawBlock;
 
 use crate::cpu::instructions::Instruction;
 
-use super::{cgb::ConstAllocError, Assembler, MacroAssembler};
+use super::{Assembler, Variable};
 
 pub mod basic_block;
 pub mod loop_block;
@@ -54,22 +54,14 @@ impl From<Vec<Instruction>> for Block {
     }
 }
 
-impl From<Block> for Vec<u8> {
-    fn from(value: Block) -> Self {
-        match value {
-            Block::Basic(block) => block.into(),
-            Block::Raw(block) => block.into(),
-            _ => unimplemented!()
-        }
-    }
-}
+impl TryFrom<&Block> for Vec<u8> {
+    type Error = Vec<EmitterError>;
 
-impl From<&Block> for Vec<u8> {
-    fn from(value: &Block) -> Self {
+    fn try_from(value: &Block) -> Result<Self, Self::Error> {
         match value {
-            Block::Basic(block) => block.into(),
-            Block::Loop(block) => block.into(),
-            Block::Raw(block) => block.into(),
+            Block::Basic(block) => block.try_into(),
+            Block::Loop(block) => block.try_into(),
+            Block::Raw(block) => Ok(block.into()),
             _ => unimplemented!()
         }
     }
@@ -104,32 +96,7 @@ impl Assembler for Block {
     }
 }
 
-// impl MacroAssembler for Block {
-//     type AllocError = ConstAllocError;
-
-//     fn basic_block<F>(&mut self, inner: F) -> &mut Self
-//             where F: Fn(&mut BasicBlock) {
-//         match self {
-//             Self::Basic(block) => { block.basic_block(inner); }
-//             Self::Loop(block) => { block.basic_block(inner); }
-//             Self::Raw(block) => { block.basic_block(inner); }
-//             _ => unimplemented!()
-//         }
-
-//         self
-//     }
-
-//     fn loop_block<F>(&mut self, condition: super::LoopCondition, inner: F) -> &mut Self
-//             where F: Fn(&mut LoopBlock) {
-//         match self {
-//             Self::Basic(block) => { block.loop_block(condition, inner); },
-//             Self::Loop(block) => { block.loop_block(condition, inner); },
-//             Self::Raw(block) => { block.loop_block(condition, inner); },
-//             _ => unimplemented!()
-//         }
-
-//         self
-//     }
-
-//     fn new_var
-// }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmitterError {
+    UnallocatedVariable(Variable),
+}

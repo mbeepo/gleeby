@@ -1,11 +1,13 @@
 use std::io::{Seek, Write};
 use std::{collections::HashMap, fs::File, io};
 
+use super::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use super::assembler::Context;
 use super::block::Block;
-use super::variables::IdInner;
-use super::{Assembler, BasicBlock, LoopBlock, LoopCondition, MacroAssembler, Variable};
+use super::variables::{ConfirmedVariable, IdInner, MemoryVariable, RegVariable, Variabler};
+use super::{Assembler, AssemblerError, BasicBlock, Ctx, Id, LoopBlock, LoopCondition, MacroAssembler, Variable};
 use crate::cpu::instructions::Instruction;
+use crate::cpu::Condition;
 use crate::memory::Addr;
 use crate::ppu::{palettes::Color, TilemapSelector};
 
@@ -14,42 +16,7 @@ pub struct InterruptHandlers {
     
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ConstAllocator {
-    pub next_const: Addr,
-    pub max_const: Addr,
-    pub const_len: u16,
-    pub next_var: Addr,
-    pub max_var: Addr,
-    pub var_len: u16,
-}
-
-impl Default for ConstAllocator {
-    fn default() -> Self {
-        Self {
-            next_const: 0,
-            max_const: 0x07ff,
-            const_len: 0,
-            next_var: 0,
-            max_var: 0x0fff,
-            var_len: 0,
-        }
-    }
-}
-
-impl ConstAllocator {
-    pub fn offset_const(&mut self, by: isize) {
-        self.next_const = (self.next_const as isize + by) as Addr;
-        self.max_const = (self.max_const as isize + by) as Addr;
-    }
-
-    pub fn offset_vars(&mut self, by: isize) {
-        self.next_var = (self.next_var as isize + by) as Addr;
-        self.max_var = (self.max_var as isize + by) as Addr;
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Cgb {
     output: Vec<Block>,
     labels: HashMap<String, Addr>,
@@ -59,15 +26,15 @@ pub struct Cgb {
     allocator: ConstAllocator,
     next_id: IdInner,
     consts: Vec<(Addr, Vec<u8>)>,
-    variables: Vec<(Vec<u8>, Variable)>,
+    variables: HashMap<(Id, Ctx), Variable>,
 }
 
 impl Cgb {
     pub fn new() -> Self {
         let output: Vec<Block> = Vec::with_capacity(4);
         let mut allocator = ConstAllocator::default();
-        allocator.offset_const(0x7800);
-        allocator.offset_vars(0xc000);
+        allocator.constants.offset = 0x07ff;
+        allocator.variables.offset = 0xc000;
 
         Self {
             output,
@@ -78,7 +45,7 @@ impl Cgb {
             handlers: Default::default(),
             next_id: 1,
             consts: Vec::with_capacity(4),
-            variables: Vec::with_capacity(4),
+            variables: HashMap::with_capacity(4),
         }
     }
 
@@ -88,11 +55,11 @@ impl Cgb {
         file.write_all(&[0x80])?;
     
         // jump to main code
-        let trampoline: Vec<u8> = Instruction::Jp(0x150).into();
+        let trampoline: Vec<u8> = Instruction::Jp(Condition::Always, 0x150).into();
         file.seek(io::SeekFrom::Start(0x100))?;
         file.write_all(&trampoline)?;
     
-        let output: Vec<u8> = self.output.iter().flat_map(|block| { let out: Vec<u8> = block.into(); out }).collect::<Vec<u8>>();
+        let output: Vec<u8> = self.output.iter().flat_map(|block| { let out: Vec<u8> = block.try_into().expect("Blorp"); out }).collect::<Vec<u8>>();
         file.seek(io::SeekFrom::Start(0x150))?;
         file.write_all(&output)?;
 
@@ -125,9 +92,23 @@ impl Assembler for Cgb {
     }
 }
 
-impl MacroAssembler for Cgb {
-    type AllocError = ConstAllocError;
+impl Variabler<AssemblerError, ConstAllocError> for Cgb {
+    type Alloc = ConstAllocator;
 
+    fn new_var<T>(&mut self, initial: T) -> super::Variable
+           where T: super::assembler::AsBuf {
+        let (id, ctx) = (self.new_id(), self.new_ctx());
+        let var = Variable::Unallocated { id, ctx };
+        self.variables.insert((id, ctx), var);
+        var
+    }
+
+    fn allocator(&mut self) -> &mut Self::Alloc {
+        &mut self.allocator
+    }
+}
+
+impl MacroAssembler<AssemblerError, ConstAllocError> for Cgb {
     /// [BasicBlock] builder
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
             where F: Fn(&mut BasicBlock) {
@@ -154,15 +135,8 @@ impl MacroAssembler for Cgb {
         self
     }
 
-    fn new_var<T>(&mut self, initial: T) -> super::Variable
-           where T: super::assembler::AsBuf {
-        let var = Variable::Dynamic { id: self.new_id(), ctx: self.new_ctx() };
-        self.variables.push((initial.as_buf(), var));
-        var
-    }
-
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, Self::AllocError> {
-        let addr = self.allocator.new_const(data)?;
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
+        let addr = self.allocator.new_const(data).map_err(AssemblerError::AllocError)?;
         self.consts.push((addr, data.to_vec()));
 
         Ok(addr)
@@ -176,20 +150,5 @@ impl Context for Cgb {
 
     fn next_id_mut(&mut self) -> &mut IdInner {
         &mut self.next_id
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConstAllocError {
-
-}
-
-impl ConstAllocator {
-    pub fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
-        let len = data.len();
-        let addr = self.next_const;
-        self.next_const += len as u16;
-
-        Ok(addr)
     }
 }

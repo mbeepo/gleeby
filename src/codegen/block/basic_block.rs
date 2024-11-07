@@ -1,15 +1,18 @@
+use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use crate::codegen::assembler::{AsBuf, Context};
-use crate::codegen::cgb::{ConstAllocError, ConstAllocator};
-use crate::codegen::{Assembler, LoopCondition, MacroAssembler};
+use crate::codegen::variables::{MemoryVariable, RegVariable, Variabler};
+use crate::codegen::{Assembler, AssemblerError, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
 use crate::codegen::{Ctx, IdInner, Variable};
 use crate::cpu::instructions::Instruction;
 use crate::memory::Addr;
 
-#[derive(Clone, Default, Debug, PartialEq, Eq)]
+use super::EmitterError;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BasicBlock {
     next_id: IdInner,
-    allocator: ConstAllocator,
+    pub allocator: ConstAllocator,
     pub ctx: Ctx,
     pub variables: Vec<(Vec<u8>, Variable)>,
     pub contents: Vec<Block>,
@@ -20,20 +23,35 @@ impl From<Vec<Instruction>> for BasicBlock {
     fn from(instructions: Vec<Instruction>) -> Self {
         Self { 
             contents: vec![instructions.into()],
-            ..Default::default()
+            next_id: Default::default(),
+            allocator: ConstAllocator::default(),
+            ctx: Default::default(),
+            variables: Default::default(),
+            consts: Default::default(),
         }
     }
 }
 
-impl From<BasicBlock> for Vec<u8> {
-    fn from(value: BasicBlock) -> Self {
-        (&value).into()
-    }
-}
+impl TryFrom<&BasicBlock> for Vec<u8>  {
+    type Error = Vec<EmitterError>;
 
-impl From<&BasicBlock> for Vec<u8> {
-    fn from(value: &BasicBlock) -> Self {
-        value.contents.iter().flat_map(|block| { let out: Vec<u8> = block.into(); out }).collect::<Vec<u8>>()
+    fn try_from(value: &BasicBlock) -> Result<Self, Self::Error> {
+        let (out, errors) = value.contents.iter().fold((Vec::with_capacity(8), Vec::with_capacity(4)), |mut acc, instruction| {
+            let out: Result<Vec<u8>, Self::Error> = instruction.try_into();
+
+            match out {
+                Ok(buf) => acc.0.extend(buf),
+                Err(e) => acc.1.extend(e),
+            };
+
+            acc
+        });
+
+        if errors.len() > 0 {
+            Err(errors)
+        } else {
+            Ok(out)
+        }
     }
 }
 
@@ -57,9 +75,22 @@ impl Assembler for BasicBlock {
     }
 }
 
-impl MacroAssembler for BasicBlock {
-    type AllocError = ConstAllocError;
+impl Variabler<AssemblerError, ConstAllocError> for BasicBlock {
+    type Alloc = ConstAllocator;
 
+    fn new_var<T>(&mut self, initial: T) -> Variable
+           where T: AsBuf {
+        let var = Variable::Unallocated { id: self.new_id(), ctx: self.new_ctx() };
+        self.variables.push((initial.as_buf(), var));
+        var
+    }
+
+    fn allocator(&mut self) -> &mut Self::Alloc {
+        &mut self.allocator
+    }
+}
+
+impl MacroAssembler<AssemblerError, ConstAllocError> for BasicBlock {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
             where F: Fn(&mut BasicBlock) {
         let mut block: BasicBlock = Vec::with_capacity(4).into();
@@ -83,17 +114,10 @@ impl MacroAssembler for BasicBlock {
         self
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<crate::memory::Addr, Self::AllocError> {
-        let addr = self.allocator.new_const(data)?;
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
+        let addr = self.allocator.new_const(data).map_err(AssemblerError::AllocError)?;
         self.consts.push((addr, data.to_vec()));
         Ok(addr)
-    }
-
-    fn new_var<T>(&mut self, initial: T) -> Variable
-           where T: AsBuf {
-        let var = Variable::Dynamic { id: self.new_id(), ctx: self.new_ctx() };
-        self.variables.push((initial.as_buf(), var));
-        var
     }
 }
 
@@ -104,5 +128,11 @@ impl Context for BasicBlock {
 
     fn next_id_mut(&mut self) -> &mut IdInner {
         &mut self.next_id
+    }
+}
+
+impl AsRef<BasicBlock> for BasicBlock {
+    fn as_ref(&self) -> &BasicBlock {
+        self
     }
 }

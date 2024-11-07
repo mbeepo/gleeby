@@ -1,6 +1,17 @@
-use crate::{codegen::{assembler::AsBuf, block::raw_block::RawBlock, cgb::ConstAllocError, Assembler, Ctx, MacroAssembler, Variable}, cpu::instructions::{Condition, Instruction}};
+use crate::{
+    codegen::{
+        allocator::{Allocator, ConstAllocError, ConstAllocator}, assembler::AsBuf, variables::{MemoryVariable, RegVariable, Variabler}, Assembler, AssemblerError, Ctx, MacroAssembler, Variable
+    },
+    cpu::{
+        instructions::{
+            Condition,
+            Instruction
+        },
+        CpuFlag
+    }, memory::Addr
+};
 
-use super::basic_block::BasicBlock;
+use super::{basic_block::BasicBlock, EmitterError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopCondition {
@@ -37,8 +48,10 @@ impl LoopBlock {
     }
 }
 
-impl From<&LoopBlock> for Vec<u8> {
-    fn from(value: &LoopBlock) -> Self {
+impl TryFrom<&LoopBlock> for Vec<u8> {
+    type Error = Vec<EmitterError>;
+
+    fn try_from(value: &LoopBlock) -> Result<Self, Self::Error> {
         // when jumping backwards the offset must include the Jr itself (2 bytes)
         let block_length = value.inner.len() + LoopBlock::JR_LEN;
 
@@ -49,28 +62,27 @@ impl From<&LoopBlock> for Vec<u8> {
 
         let jump: Vec<u8> = match value.condition {
             LoopCondition::Native(condition) => {
-                let mut buffer = RawBlock::default();
+                let mut buffer = BasicBlock::default();
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
             LoopCondition::Countdown { counter, end } => {
                 if end == 0 {
                     match counter {
-                        Variable::Dynamic { id, ctx } => {
-                            
-                            
-                            todo!()
+                        Variable::Unallocated { id, ctx } => {
+                            return Err(vec![EmitterError::UnallocatedVariable(counter)]);
                         }
-                        Variable::StaticR8(reg) => {
-                            let mut buffer = RawBlock::default();
-                            buffer.dec_r8(reg);
+                        Variable::Allocated(var) => {
+                            let mut buffer = BasicBlock::default();
+                            buffer.decrement_var(var);
+
                             let block_length = block_length + buffer.len();
                             
                             if block_length as isize * -1 < i8::MIN as isize {
                                 todo!("Loop body too big")
                             }
 
-                            buffer.jr(Condition::NZ, block_length as i8 * -1);
+                            buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
                             buffer
                         }
                         _ => todo!()
@@ -79,11 +91,11 @@ impl From<&LoopBlock> for Vec<u8> {
                     todo!()
                 }
             }
-        }.into();
+        }.as_ref().try_into()?;
 
-        let mut out: Vec<u8> = (&value.inner).into();
+        let mut out: Vec<u8> = (&value.inner).try_into()?;
         out.extend(jump);
-        out
+        Ok(out)
     }
 }
 
@@ -101,9 +113,20 @@ impl Assembler for LoopBlock {
     }
 }
 
-impl MacroAssembler for LoopBlock {
-    type AllocError = ConstAllocError;
+impl Variabler<AssemblerError, ConstAllocError> for LoopBlock {
+    type Alloc = ConstAllocator;
 
+    fn new_var<T>(&mut self, initial: T) -> Variable
+            where T: AsBuf {
+        self.inner.new_var(initial)
+    }
+
+    fn allocator(&mut self) -> &mut Self::Alloc {
+        self.inner.allocator()
+    }
+}
+
+impl MacroAssembler<AssemblerError, ConstAllocError> for LoopBlock {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
             where F: Fn(&mut BasicBlock) {
         self.inner.basic_block(inner);
@@ -116,12 +139,7 @@ impl MacroAssembler for LoopBlock {
         self
     }
 
-    fn new_var<T>(&mut self, initial: T) -> Variable
-            where T: AsBuf {
-        self.inner.new_var(initial)
-    }
-
-    fn new_const(&mut self, data: &[u8]) -> Result<crate::memory::Addr, Self::AllocError> {
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
         self.inner.new_const(data)
     }
 }
