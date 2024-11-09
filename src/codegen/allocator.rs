@@ -1,6 +1,8 @@
-use crate::memory::Addr;
+use std::marker::PhantomData;
 
-use super::{variables::{Variable, RegSelector}, Id};
+use crate::{cpu::{GpRegister, RegisterPair}, memory::Addr};
+
+use super::Id;
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct GpRegisters {
@@ -14,12 +16,20 @@ pub struct GpRegisters {
 }
 
 impl GpRegisters {
-    fn alloc_reg(&mut self, kind: RegKind) -> Result<RegSelector, ConstAllocError> {
-        
+    fn alloc(&mut self) -> Result<GpRegister, ConstAllocError> {
+        todo!()
     }
 
-    fn dealloc_reg(&mut self, reg: RegSelector) {
-        self.registers.dealloc(reg)
+    fn dealloc(&mut self, reg: GpRegister) {
+        todo!()
+    }
+
+    fn alloc_pair(&mut self) -> Result<RegisterPair, ConstAllocError> {
+        todo!()
+    }
+
+    fn dealloc_pair(&mut self, reg_pair: RegisterPair) {
+        todo!()
     }
 }
 
@@ -82,18 +92,26 @@ pub enum ConstAllocError {
 }
 
 impl AllocErrorTrait for ConstAllocError {
-    fn oversized_reg() -> Self {
+    fn oversized_load() -> Self {
         Self::TooBigForRegister
     }
 }
 
 impl Allocator<ConstAllocError> for ConstAllocator {
-    fn alloc_reg(&mut self, var: Variable) -> Result<RegSelector, ConstAllocError> {
-        self.registers.alloc(var.len.into())
+    fn alloc_reg(&mut self) -> Result<GpRegister, ConstAllocError> {
+        self.registers.alloc()
     }
 
-    fn dealloc_reg(&mut self, reg: RegSelector) {
+    fn dealloc_reg(&mut self, reg: GpRegister) {
         self.registers.dealloc(reg)
+    }
+
+    fn alloc_reg_pair(&mut self) -> Result<RegisterPair, ConstAllocError> {
+        self.registers.alloc_pair()
+    }
+
+    fn dealloc_reg_pair(&mut self, reg_pair: RegisterPair) {
+        self.registers.dealloc_pair(reg_pair);
     }
 
     fn alloc_const(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
@@ -106,21 +124,33 @@ impl Allocator<ConstAllocError> for ConstAllocator {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RegKind {
+pub enum RegKind<AllocError>
+        where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
     GpRegister,
     RegisterPair,
+    OkTypecheckerYouWin(PhantomData<AllocError>),
 }
+
+impl<AllocError> RegKind<AllocError>
+        where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
+    pub fn try_from_len(len: u16) -> Result<Self, AllocError> {
+        if len == 1 { Ok(Self::GpRegister) }
+        else if len == 2 { Ok(Self::RegisterPair) }
+        else { Err(AllocError::oversized_load())}
+    }
+}
+
 
 pub trait Allocator<AllocError>: std::fmt::Debug
         where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
-    fn alloc_reg(&mut self, kind: RegKind) -> Result<RegSelector, AllocError>;
-    fn dealloc_reg(&mut self, reg: RegSelector);
+    fn alloc_reg(&mut self) -> Result<GpRegister, AllocError>;
+    fn dealloc_reg(&mut self, reg: GpRegister);
+    fn alloc_reg_pair(&mut self) -> Result<RegisterPair, AllocError>;
+    fn dealloc_reg_pair(&mut self, reg_pair: RegisterPair);
     fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;
-    fn dealloc_const(&mut self, addr: Addr);
     fn alloc_var(&mut self, len: u16) -> Result<Addr, AllocError>;
-    fn dealloc_var(&mut self, addr: Addr);
 }
 
 pub trait AllocErrorTrait: Clone + std::fmt::Debug {
-    fn oversized_reg() -> Self;
+    fn oversized_load() -> Self;
 }

@@ -3,7 +3,7 @@ use crate::{cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition
 use super::{allocator::AllocErrorTrait, block::basic_block::BasicBlock, meta_instr::MetaInstructionTrait, variables::Variabler, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
 pub trait Assembler<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
 
     fn push_instruction(&mut self, instruction: Instruction<Meta>);
     fn push_buf(&mut self, buf: &[Instruction<Meta>]);
@@ -178,7 +178,7 @@ pub trait Assembler<Meta>
 }
 
 pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<Meta, Error, AllocError>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait,
             Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError>,
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
     /// [BasicBlock] builder

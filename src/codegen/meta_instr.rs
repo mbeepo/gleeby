@@ -10,7 +10,7 @@ pub trait MetaInstructionTrait {
     fn var_dec(var: Variable) -> Self;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetaInstruction {
     VarLd { dest: Variable, src: Variable },
     VarFromMem { dest: Variable, src: Variable },

@@ -1,6 +1,6 @@
 use std::hash::Hash;
 
-use crate::{codegen::allocator::RegKind, cpu::{GpRegister, RegisterPair, SplitError, StackPair}, memory::Addr};
+use crate::{codegen::allocator::RegKind, cpu::{GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::Addr};
 
 use super::{allocator::{AllocErrorTrait, Allocator}, meta_instr::MetaInstructionTrait, Assembler};
 
@@ -43,7 +43,7 @@ pub enum RegSelector {
 pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError>,
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait,
-            Meta: Clone + std::fmt::Debug + MetaInstructionTrait + MetaInstructionTrait {
+            Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait + MetaInstructionTrait {
     type Alloc: Allocator<AllocError>;
 
     fn new_var(&mut self, len: u16) -> Variable;
@@ -53,36 +53,56 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     fn load_var(&mut self, var: Variable) -> Result<RegVariable, Error> {
         let out = match var {
             Variable::Memory(var) => {
-                
+                match RegKind::<AllocError>::try_from_len(var.len)? {
+                    RegKind::GpRegister => {
+                        if let Ok(reg) = self.allocator().alloc_reg() {
+                            if reg != GpRegister::A {
+                                // will have to change which register the variable refers to that previously referred to `a`
+                                self.ld_r8_from_r8(reg, GpRegister::A);
+                            }
+                            
+                            self.ld_a_from_ind(var.addr);
+                            RegVariable::MemR8 { addr: var.addr, reg, id: var.id }
+                        } else {
+                            todo!("Swap variable to memory")
+                        }
+                    }
+                    RegKind::RegisterPair => {
+                        if let Ok(reg_pair) = self.allocator().alloc_reg_pair() {
+                            let (reg1, reg2): (GpRegister, GpRegister) = reg_pair.try_split()?;
+                            let tmp = self.allocator().alloc_reg();
 
-                match reg {
-                    RegSelector::R8(reg) => {
-                        self.push(StackPair::HL);
-                        self.ld_r16_imm(RegisterPair::HL, var.addr);
-                        self.ld_r8_from_r8(reg, GpRegister::IndHL);
-                        self.pop(StackPair::HL);
+                            let stacked = if let Ok(tmp) = tmp {
+                                if tmp != GpRegister::A {
+                                    // will have to change which register the variable refers to that previously referred to `a`
+                                    self.ld_r8_from_r8(tmp, GpRegister::A);
+                                }
 
-                        RegVariable::MemR8 { addr: var.addr, reg, id: var.id }
-                    },
-                    RegSelector::R16(reg_pair) => {
-                        let (reg1, reg2): (GpRegister, GpRegister) = reg_pair.try_split()?;
-
-                        if reg_pair != RegisterPair::HL {
+                                false
+                            } else {
+                                self.push(StackPair::AF);
+                                true
+                            };
+                            
+                            // 40t cycles
+                            // 8 bytes
                             self.ld_a_from_ind(var.addr);
                             self.ld_r8_from_r8(reg2, GpRegister::A);
                             self.ld_a_from_ind(var.addr + 1);
                             self.ld_r8_from_r8(reg1, GpRegister::A);
-                        } else {
-                            self.push(StackPair::HL);
-                            self.ld_r16_imm(RegisterPair::HL, var.addr);
-                            self.ld_r8_from_r8(reg2, GpRegister::IndHL);
-                            self.inc_r16(RegisterPair::HL);
-                            self.ld_r8_from_r8(reg1, GpRegister::IndHL);
-                            self.pop(StackPair::HL);
-                        }
 
-                        RegVariable::MemR16 { addr: var.addr, reg_pair, id: var.id }
-                    },
+                            if stacked {
+                                self.pop(StackPair::AF);
+                            } else {
+                                self.allocator().dealloc_reg(GpRegister::A);
+                            }
+
+                            RegVariable::MemR16 { addr: var.addr, reg_pair, id: var.id }
+                        } else {
+                            todo!("Swap variable to memory")
+                        }
+                    }
+                    _ => unreachable!("The typechecker will never win")
                 }
             }
             Variable::Reg(var) => var,
@@ -92,7 +112,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 } else if len == 2 {
                     RegVariable::UnallocatedR16(id)
                 } else {
-                    Err(AllocError::oversized_reg())?
+                    Err(AllocError::oversized_load())?
                 }
             }
         };
@@ -107,7 +127,18 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 match reg {
                     RegVariable::R8 { reg, id } => {
                         let addr = self.allocator().alloc_var(1)?;
-                        let tmp = self.allocator().alloc_reg(RegKind::RegisterPair);
+                        let tmp = self.allocator().alloc_reg();
+
+                        if let Ok(tmp) = tmp {
+                            if tmp == GpRegister::A {
+                                todo!()
+                            } else {
+                                todo!()
+                            }
+                        } else {
+                            // fall back to `self.ld_a_to_r16`
+                            todo!()
+                        }
 
                         todo!()
                     }

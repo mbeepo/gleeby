@@ -23,13 +23,13 @@ pub enum LoopCondition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     pub condition: LoopCondition,
     pub inner: BasicBlock<Meta>,
 }
 
 impl<Meta> LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     const JR_LEN: usize = 2;
 
     pub fn new(condition: LoopCondition, inner: BasicBlock<Meta>) -> Self {
@@ -48,7 +48,7 @@ impl<Meta> LoopBlock<Meta>
 }
 
 impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     type Error = Vec<EmitterError>;
 
     fn try_from(value: &LoopBlock<Meta>) -> Result<Self, Self::Error> {
@@ -92,7 +92,7 @@ impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
 }
 
 impl<Meta> Assembler<Meta> for LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.inner.push_instruction(instruction);
     }
@@ -107,7 +107,7 @@ impl<Meta> Assembler<Meta> for LoopBlock<Meta>
 }
 
 impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     type Alloc = ConstAllocator;
 
     fn new_var(&mut self, len: u16) -> Variable {
@@ -120,7 +120,7 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
 }
 
 impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
             where F: Fn(&mut BasicBlock<Meta>) {
         self.inner.basic_block(inner);

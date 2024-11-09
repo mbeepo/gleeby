@@ -12,7 +12,7 @@ use super::EmitterError;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     next_id: IdInner,
     pub allocator: ConstAllocator,
     pub variables: Vec<Variable>,
@@ -21,7 +21,7 @@ pub struct BasicBlock<Meta>
 }
 
 impl<Meta> Default for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn default() -> Self {
         Self {
             next_id: Default::default(),
@@ -34,7 +34,7 @@ impl<Meta> Default for BasicBlock<Meta>
 }
 
 impl<Meta> From<Vec<Instruction<Meta>>> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn from(instructions: Vec<Instruction<Meta>>) -> Self {
         Self { 
             contents: vec![instructions.into()],
@@ -47,7 +47,7 @@ impl<Meta> From<Vec<Instruction<Meta>>> for BasicBlock<Meta>
 }
 
 impl<Meta> TryFrom<&BasicBlock<Meta>> for Vec<u8>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     type Error = Vec<EmitterError>;
 
     fn try_from(value: &BasicBlock<Meta>) -> Result<Self, Self::Error> {
@@ -71,7 +71,7 @@ impl<Meta> TryFrom<&BasicBlock<Meta>> for Vec<u8>
 }
 
 impl<Meta> Assembler<Meta> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
 
     fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.push_buf(&[instruction])
@@ -93,7 +93,7 @@ impl<Meta> Assembler<Meta> for BasicBlock<Meta>
 }
 
 impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     type Alloc = ConstAllocator;
 
     fn new_var(&mut self, len: u16) -> Variable {
@@ -108,7 +108,7 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
 }
 
 impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
             where F: Fn(&mut BasicBlock<Meta>) {
         let mut block: BasicBlock<Meta> = Vec::with_capacity(4).into();
@@ -135,7 +135,7 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
 }
 
 impl<Meta> Context for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn next_id(&self) -> IdInner {
         self.next_id
     }
@@ -146,7 +146,7 @@ impl<Meta> Context for BasicBlock<Meta>
 }
 
 impl<Meta> AsRef<BasicBlock<Meta>> for BasicBlock<Meta>
-    where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn as_ref(&self) -> &BasicBlock<Meta> {
         self
     }

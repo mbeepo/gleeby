@@ -18,7 +18,7 @@ pub enum Bit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instruction<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     LdR16Imm(RegisterPair, u16),
     LdAFromR16(IndirectPair),
     IncR16(RegisterPair),
@@ -50,7 +50,7 @@ pub enum PrefixInstruction {
 }
 
 impl<Meta> Instruction<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     pub const PREFIX: u8 = 0xcb;
 
     pub fn len(&self) -> usize {
@@ -119,7 +119,7 @@ impl PrefixInstruction {
 }
 
 impl<Meta> From<Instruction<Meta>> for Vec<u8>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn from(value: Instruction<Meta>) -> Self {
         use Instruction::*;
         let mut out: Vec<u8> = Vec::with_capacity(3);
@@ -132,13 +132,16 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
                 out[0] += r16 as u8 * 0x10;
                 out.extend(imm.to_le_bytes());
             }
-            LdAFromR16(r16) => out[0] += r16 as u8 * 0x10,
+            LdAFromR16(r16)
+            | LdAToR16(r16) => out[0] += r16 as u8 * 0x10,
             LdR8Imm(r8, imm) => {
                 out[0] += r8 as u8 * 0x08;
                 out.push(imm);
             }
             LdhFromA(imm)
             | LdhToA(imm) => out.push(imm),
+            LdAFromInd(imm)
+            | LdAToInd(imm) => out.extend(imm.to_le_bytes()),
             IncR8(r8)
             | DecR8(r8) => out[0] += r8 as u8 * 0x08,
             IncR16(r16)
@@ -160,7 +163,8 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
             | Pop(r16) => out[0] += r16 as u8 * 0x10,
             Prefixed(instruction) => out.push(instruction.into()),
             Label(_) => {},
-            e => unimplemented!("There is no {:?}", e)
+            Meta(_) => unimplemented!("Metainstruction unevaluated"),
+            // e => unimplemented!("There is no {:?}", e)
         };
 
         out
@@ -183,7 +187,7 @@ impl From<PrefixInstruction> for u8 {
 }
 
 impl<Meta> From<PrefixInstruction> for Instruction<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
     fn from(value: PrefixInstruction) -> Self {
         Self::Prefixed(value)
     }
