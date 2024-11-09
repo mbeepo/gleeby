@@ -1,6 +1,6 @@
 use crate::{
     codegen::{
-        allocator::{Allocator, ConstAllocError, ConstAllocator}, assembler::AsBuf, variables::{MemoryVariable, RegVariable, Variabler}, Assembler, AssemblerError, Ctx, MacroAssembler, Variable
+        allocator::{Allocator, ConstAllocError, ConstAllocator}, assembler::AsBuf, meta_instr::MetaInstructionTrait, variables::Variabler, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
@@ -22,38 +22,38 @@ pub enum LoopCondition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LoopBlock {
-    pub ctx: Ctx,
+pub struct LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     pub condition: LoopCondition,
-    pub inner: BasicBlock,
+    pub inner: BasicBlock<Meta>,
 }
 
-impl LoopBlock {
+impl<Meta> LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     const JR_LEN: usize = 2;
 
-    pub fn new(condition: LoopCondition, inner: BasicBlock) -> Self {
+    pub fn new(condition: LoopCondition, inner: BasicBlock<Meta>) -> Self {
         Self {
             condition,
             inner,
-            ctx: Default::default(),
         }
     }
 
-    pub fn new_native(condition: Condition, inner: BasicBlock) -> Self {
+    pub fn new_native(condition: Condition, inner: BasicBlock<Meta>) -> Self {
         Self {
             condition: LoopCondition::Native(condition),
             inner,
-            ctx: Default::default(),
         }
     }
 }
 
-impl TryFrom<&LoopBlock> for Vec<u8> {
+impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Error = Vec<EmitterError>;
 
-    fn try_from(value: &LoopBlock) -> Result<Self, Self::Error> {
+    fn try_from(value: &LoopBlock<Meta>) -> Result<Self, Self::Error> {
         // when jumping backwards the offset must include the Jr itself (2 bytes)
-        let block_length = value.inner.len() + LoopBlock::JR_LEN;
+        let block_length = value.inner.len() + LoopBlock::<Meta>::JR_LEN;
 
         // Jr takes a signed 8-bit integer
         if block_length as isize * -1 < i8::MIN as isize {
@@ -62,31 +62,23 @@ impl TryFrom<&LoopBlock> for Vec<u8> {
 
         let jump: Vec<u8> = match value.condition {
             LoopCondition::Native(condition) => {
-                let mut buffer = BasicBlock::default();
+                let mut buffer = BasicBlock::<Meta>::default();
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
             LoopCondition::Countdown { counter, end } => {
                 if end == 0 {
-                    match counter {
-                        Variable::Unallocated { id, ctx } => {
-                            return Err(vec![EmitterError::UnallocatedVariable(counter)]);
-                        }
-                        Variable::Allocated(var) => {
-                            let mut buffer = BasicBlock::default();
-                            buffer.decrement_var(var);
+                    let mut buffer = BasicBlock::default();
+                    buffer.dec_var(counter);
 
-                            let block_length = block_length + buffer.len();
-                            
-                            if block_length as isize * -1 < i8::MIN as isize {
-                                todo!("Loop body too big")
-                            }
-
-                            buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
-                            buffer
-                        }
-                        _ => todo!()
+                    let block_length = block_length + buffer.len();
+                    
+                    if block_length as isize * -1 < i8::MIN as isize {
+                        todo!("Loop body too big")
                     }
+
+                    buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
+                    buffer
                 } else {
                     todo!()
                 }
@@ -99,12 +91,13 @@ impl TryFrom<&LoopBlock> for Vec<u8> {
     }
 }
 
-impl Assembler for LoopBlock {
-    fn push_instruction(&mut self, instruction: Instruction) {
+impl<Meta> Assembler<Meta> for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.inner.push_instruction(instruction);
     }
 
-    fn push_buf(&mut self, buf: &[Instruction]) {
+    fn push_buf(&mut self, buf: &[Instruction<Meta>]) {
         self.inner.push_buf(buf);
     }
 
@@ -113,12 +106,12 @@ impl Assembler for LoopBlock {
     }
 }
 
-impl Variabler<AssemblerError, ConstAllocError> for LoopBlock {
+impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Alloc = ConstAllocator;
 
-    fn new_var<T>(&mut self, initial: T) -> Variable
-            where T: AsBuf {
-        self.inner.new_var(initial)
+    fn new_var(&mut self, len: u16) -> Variable {
+        self.inner.new_var(len)
     }
 
     fn allocator(&mut self) -> &mut Self::Alloc {
@@ -126,20 +119,21 @@ impl Variabler<AssemblerError, ConstAllocError> for LoopBlock {
     }
 }
 
-impl MacroAssembler<AssemblerError, ConstAllocError> for LoopBlock {
+impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut BasicBlock) {
+            where F: Fn(&mut BasicBlock<Meta>) {
         self.inner.basic_block(inner);
         self
     }
 
     fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-            where F: Fn(&mut LoopBlock) {
+            where F: Fn(&mut LoopBlock<Meta>) {
         self.inner.loop_block(condition, inner);
         self
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
         self.inner.new_const(data)
     }
 }

@@ -4,60 +4,68 @@ use raw_block::RawBlock;
 
 use crate::cpu::instructions::Instruction;
 
-use super::{Assembler, Variable};
+use super::{meta_instr::MetaInstructionTrait, Assembler, Variable};
 
 pub mod basic_block;
 pub mod loop_block;
 pub mod raw_block;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Block {
-    Basic(BasicBlock),
-    Labeled(String, BasicBlock),
-    Loop(LoopBlock),
-    Raw(RawBlock),
+pub enum Block<Meta>
+    where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    Basic(BasicBlock<Meta>),
+    Labeled(String, BasicBlock<Meta>),
+    Loop(LoopBlock<Meta>),
+    Raw(RawBlock<Meta>),
 }
 
-impl Default for Block {
+impl<Meta> Default for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn default() -> Self {
         Self::Raw(Default::default())
     }
 }
 
-impl From<LoopBlock> for Block {
-    fn from(value: LoopBlock) -> Self {
+impl<Meta> From<LoopBlock<Meta>> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: LoopBlock<Meta>) -> Self {
         Block::Loop(value)
     }
 }
 
-impl From<BasicBlock> for Block {
-    fn from(value: BasicBlock) -> Self {
+impl<Meta> From<BasicBlock<Meta>> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: BasicBlock<Meta>) -> Self {
         Block::Basic(value)
     }
 }
 
-impl From<Instruction> for Block {
-    fn from(value: Instruction) -> Self {
+impl<Meta> From<Instruction<Meta>> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: Instruction<Meta>) -> Self {
         Self::Raw(RawBlock(vec![value]))
     }
 }
 
-impl From<&Instruction> for Block {
-    fn from(value: &Instruction) -> Self {
+impl<Meta> From<&Instruction<Meta>> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: &Instruction<Meta>) -> Self {
         (*value).into()
     }
 }
 
-impl From<Vec<Instruction>> for Block {
-    fn from(value: Vec<Instruction>) -> Self {
+impl<Meta> From<Vec<Instruction<Meta>>> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: Vec<Instruction<Meta>>) -> Self {
         Self::Raw(RawBlock(value))
     }
 }
 
-impl TryFrom<&Block> for Vec<u8> {
+impl<Meta> TryFrom<&Block<Meta>> for Vec<u8>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Error = Vec<EmitterError>;
 
-    fn try_from(value: &Block) -> Result<Self, Self::Error> {
+    fn try_from(value: &Block<Meta>) -> Result<Self, Self::Error> {
         match value {
             Block::Basic(block) => block.try_into(),
             Block::Loop(block) => block.try_into(),
@@ -67,8 +75,10 @@ impl TryFrom<&Block> for Vec<u8> {
     }
 }
 
-impl Assembler for Block {
-    fn push_instruction(&mut self, instruction: Instruction) {
+impl<Meta> Assembler<Meta> for Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+
+    fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         match self {
             Self::Basic(block) => block.push_instruction(instruction),
             Self::Loop(block) => block.push_instruction(instruction),
@@ -77,7 +87,7 @@ impl Assembler for Block {
         }
     }
 
-    fn push_buf(&mut self, buf: &[Instruction]) {
+    fn push_buf(&mut self, buf: &[Instruction<Meta>]) {
         match self {
             Self::Basic(block) => block.push_buf(buf),
             Self::Loop(block) => block.push_buf(buf),

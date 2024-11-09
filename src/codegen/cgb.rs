@@ -4,8 +4,9 @@ use std::{collections::HashMap, fs::File, io};
 use super::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use super::assembler::Context;
 use super::block::Block;
-use super::variables::{ConfirmedVariable, IdInner, MemoryVariable, RegVariable, Variabler};
-use super::{Assembler, AssemblerError, BasicBlock, Ctx, Id, LoopBlock, LoopCondition, MacroAssembler, Variable};
+use super::meta_instr::MetaInstruction;
+use super::variables::{Variable, IdInner, Variabler};
+use super::{Assembler, AssemblerError, BasicBlock, Id, LoopBlock, LoopCondition, MacroAssembler};
 use crate::cpu::instructions::Instruction;
 use crate::cpu::Condition;
 use crate::memory::Addr;
@@ -18,7 +19,7 @@ pub struct InterruptHandlers {
 
 #[derive(Clone, Debug)]
 pub struct Cgb {
-    output: Vec<Block>,
+    output: Vec<Block<MetaInstruction>>,
     labels: HashMap<String, Addr>,
     palettes: [[Color; 4]; 8],
     tilemap: TilemapSelector,
@@ -26,12 +27,12 @@ pub struct Cgb {
     allocator: ConstAllocator,
     next_id: IdInner,
     consts: Vec<(Addr, Vec<u8>)>,
-    variables: HashMap<(Id, Ctx), Variable>,
+    variables: HashMap<Id, Variable>,
 }
 
 impl Cgb {
     pub fn new() -> Self {
-        let output: Vec<Block> = Vec::with_capacity(4);
+        let output: Vec<Block<MetaInstruction>> = Vec::with_capacity(4);
         let mut allocator = ConstAllocator::default();
         allocator.constants.offset = 0x07ff;
         allocator.variables.offset = 0xc000;
@@ -55,7 +56,7 @@ impl Cgb {
         file.write_all(&[0x80])?;
     
         // jump to main code
-        let trampoline: Vec<u8> = Instruction::Jp(Condition::Always, 0x150).into();
+        let trampoline: Vec<u8> = Instruction::<MetaInstruction>::Jp(Condition::Always, 0x150).into();
         file.seek(io::SeekFrom::Start(0x100))?;
         file.write_all(&trampoline)?;
     
@@ -72,17 +73,17 @@ impl Cgb {
     }
 }
 
-impl Assembler for Cgb {
-    fn push_instruction(&mut self, instruction: Instruction) {
+impl Assembler<MetaInstruction> for Cgb {
+    fn push_instruction(&mut self, instruction: Instruction<MetaInstruction>) {
         self.push_buf(&[instruction]);
     }
 
-    fn push_buf(&mut self, buf: &[Instruction]) {
+    fn push_buf(&mut self, buf: &[Instruction<MetaInstruction>]) {
         if let Some(Block::Raw(block)) = self.output.last_mut() {
-            block.0.extend(buf);
+            block.0.extend(buf.to_vec());
         } else {
-            let mut new: Vec<Instruction> = Vec::with_capacity(buf.len() + 2);
-            new.extend(buf);
+            let mut new: Vec<Instruction<MetaInstruction>> = Vec::with_capacity(buf.len() + 2);
+            new.extend(buf.to_vec());
             self.output.push(new.into());
         }
     }
@@ -92,14 +93,13 @@ impl Assembler for Cgb {
     }
 }
 
-impl Variabler<AssemblerError, ConstAllocError> for Cgb {
+impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     type Alloc = ConstAllocator;
 
-    fn new_var<T>(&mut self, initial: T) -> super::Variable
-           where T: super::assembler::AsBuf {
-        let (id, ctx) = (self.new_id(), self.new_ctx());
-        let var = Variable::Unallocated { id, ctx };
-        self.variables.insert((id, ctx), var);
+    fn new_var(&mut self, len: u16) -> super::Variable {
+        let id = self.new_id();
+        let var = Variable::Unallocated { len, id };
+        self.variables.insert(id, var);
         var
     }
 
@@ -108,35 +108,29 @@ impl Variabler<AssemblerError, ConstAllocError> for Cgb {
     }
 }
 
-impl MacroAssembler<AssemblerError, ConstAllocError> for Cgb {
+impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     /// [BasicBlock] builder
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut BasicBlock) {
-        let mut block: BasicBlock = Vec::with_capacity(4).into();
+            where F: Fn(&mut BasicBlock<MetaInstruction>) {
+        let mut block: BasicBlock<MetaInstruction> = Vec::with_capacity(4).into();
         inner(&mut block);
 
-        let ctx = self.new_ctx();
-        block.ctx = ctx;
         self.output.push(block.into());
-
         self
     }
 
     /// [Loop] builder
     fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-           where F: Fn(&mut LoopBlock) {
-        let mut block: LoopBlock = LoopBlock::new(condition, Vec::with_capacity(4).into());
+           where F: Fn(&mut LoopBlock<MetaInstruction>) {
+        let mut block: LoopBlock<MetaInstruction> = LoopBlock::new(condition, Vec::with_capacity(4).into());
         inner(&mut block);
 
-        let ctx = self.new_ctx();
-        block.ctx = ctx;
         self.output.push(block.into());
-
         self
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
-        let addr = self.allocator.new_const(data).map_err(AssemblerError::AllocError)?;
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
+        let addr = self.allocator.alloc_const(data.len() as u16)?;
         self.consts.push((addr, data.to_vec()));
 
         Ok(addr)

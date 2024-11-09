@@ -1,27 +1,14 @@
 use crate::{cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector}};
 
-use super::{allocator::{Allocator, ConstAllocator}, block::basic_block::BasicBlock, variables::Variabler, Ctx, Id, IdInner, LoopBlock, LoopCondition, Variable};
+use super::{allocator::AllocErrorTrait, block::basic_block::BasicBlock, meta_instr::MetaInstructionTrait, variables::Variabler, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
-pub trait Assembler {
-    fn push_instruction(&mut self, instruction: Instruction);
-    fn push_buf(&mut self, buf: &[Instruction]);
+pub trait Assembler<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+
+    fn push_instruction(&mut self, instruction: Instruction<Meta>);
+    fn push_buf(&mut self, buf: &[Instruction<Meta>]);
     fn len(&self) -> usize;
 
-    /// `ld r, n8`
-    /// 
-    /// Load the immediate `imm` into `reg`
-    fn ld_r8_imm(&mut self, reg: GpRegister, imm: u8) -> &mut Self {
-        self.push_instruction(Instruction::LdR8Imm(reg, imm));
-        self
-    }
-
-    /// `ld r, r`
-    /// 
-    /// Load the byte in `src` into `dest`
-    fn ld_r8_from_r8(&mut self, dest: GpRegister, src: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::LdR8FromR8(dest, src));
-        self
-    }
 
     /// `ld rr, n16`
     /// 
@@ -31,7 +18,7 @@ pub trait Assembler {
         self
     }
 
-    /// `ld a, (rr)`
+    /// `ld a, [rr]`
     /// 
     /// Load the byte in `[reg]` into `a`
     fn ld_a_from_r16(&mut self, reg_pair: IndirectPair) -> &mut Self {
@@ -39,19 +26,11 @@ pub trait Assembler {
         self
     }
 
-    /// `ld (rr), a`
+    /// `inc rr`
     /// 
-    /// Load the byte in `a` into `[reg]`
-    fn ld_a_to_r16(&mut self, reg_pair: IndirectPair) -> &mut Self {
-        self.push_instruction(Instruction::LdAToR16(reg_pair));
-        self
-    }
-
-    /// `jr cc, e8`
-    /// 
-    /// Jump by `offset` bytes if `condition` is true
-    fn jr(&mut self, condition: Condition, offset: i8) -> &mut Self {
-        self.push_instruction(Instruction::Jr(condition, offset));
+    /// Increment register pair `rr`
+    fn inc_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
+        self.push_instruction(Instruction::IncR16(reg_pair));
         self
     }
 
@@ -70,12 +49,12 @@ pub trait Assembler {
         self.push_instruction(Instruction::DecR8(reg));
         self
     }
-
-    /// `inc rr`
+    
+    /// `ld r, n8`
     /// 
-    /// Increment register pair `rr`
-    fn inc_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
-        self.push_instruction(Instruction::IncR16(reg_pair));
+    /// Load the immediate `imm` into `reg`
+    fn ld_r8_imm(&mut self, reg: GpRegister, imm: u8) -> &mut Self {
+        self.push_instruction(Instruction::LdR8Imm(reg, imm));
         self
     }
 
@@ -87,41 +66,33 @@ pub trait Assembler {
         self
     }
 
-    /// `ld ($ff00+u8), a`
+    /// `ld [rr], a`
     /// 
-    /// Load the byte in `a` into the zero page offset by `imm`
-    fn ldh_from_a(&mut self, imm: u8) -> &mut Self {
-        self.push_instruction(Instruction::LdhFromA(imm));
+    /// Load the byte in `a` into `[reg]`
+    fn ld_a_to_r16(&mut self, reg_pair: IndirectPair) -> &mut Self {
+        self.push_instruction(Instruction::LdAToR16(reg_pair));
         self
     }
 
-    /// `ld a, (u16)`
+    /// `jr cc, e8`
     /// 
-    /// Load the byte at the immediate address `imm` into `a`
-    fn ld_a_from_ind16(&mut self, imm: u16) -> &mut Self {
-        self.push_instruction(Instruction::LdAFromInd(imm));
+    /// Jump by `offset` bytes if `condition` is true
+    fn jr(&mut self, condition: Condition, offset: i8) -> &mut Self {
+        self.push_instruction(Instruction::Jr(condition, offset));
         self
     }
 
-    /// `ld a, ($ff00+u8)`
+    /// `ld r, r`
     /// 
-    /// Load the byte in the zero page at offset `imm` into `a`
-    fn ldh_to_a(&mut self, imm: u8) -> &mut Self {
-        self.push_instruction(Instruction::LdhToA(imm));
-        self
-    }
-
-    /// `ld (u16), a`
-    /// 
-    /// Load a into the immediate address `imm`
-    fn ld_a_to_ind16(&mut self, imm: u16) -> &mut Self {
-        self.push_instruction(Instruction::LdIndFromA(imm));
+    /// Load the byte in `src` into `dest`
+    fn ld_r8_from_r8(&mut self, dest: GpRegister, src: GpRegister) -> &mut Self {
+        self.push_instruction(Instruction::LdR8FromR8(dest, src));
         self
     }
 
     /// `pop rr`
     /// 
-    /// Pops 2 bytes from the stack onto `rr`
+    /// Pops 2 bytes off the stack into `rr`
     fn pop(&mut self, reg_pair: StackPair) -> &mut Self {
         self.push_instruction(Instruction::Pop(reg_pair));
         self
@@ -130,56 +101,95 @@ pub trait Assembler {
     /// `jp a16`
     /// 
     /// Jump to address `addr`
-    fn jp(&mut self, condition: Condition, addr: u16) -> &mut Self {
+    fn jp(&mut self, condition: Condition, addr: Addr) -> &mut Self {
         self.push_instruction(Instruction::Jp(condition, addr));
         self
     }
 
     /// `push rr`
     /// 
-    /// Pushes `rr` to the stack
+    /// Pushes `rr` onto the stack
     fn push(&mut self, reg_pair: StackPair) -> &mut Self {
         self.push_instruction(Instruction::Push(reg_pair));
         self
     }
 
-    /// `bit u3, r`
+    /// `ld [$ff00+imm], a`
     /// 
-    /// Tests bit `bit` of `reg, settings the Zero flag if not set
-    fn bit(&mut self, bit: Bit, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::Prefixed(PrefixInstruction::Bit(bit, reg)));
+    /// Load the byte in `a` into the zero page offset by `imm`
+    fn ldh_from_a(&mut self, imm: u8) -> &mut Self {
+        self.push_instruction(Instruction::LdhFromA(imm));
         self
     }
 
-    /// `res u3, r`
+    /// `ld [imm], a`
+    /// 
+    /// Load the byte at the immediate 16-bit address into `a`
+    fn ld_a_to_ind(&mut self, imm: Addr) -> &mut Self {
+        self.push_instruction(Instruction::LdAToInd(imm));
+        self
+    }
+
+    /// `ld a, [$ff00+imm]`
+    /// 
+    /// Load the byte in the zero page at offset `imm` into `a`
+    fn ldh_to_a(&mut self, imm: u8) -> &mut Self {
+        self.push_instruction(Instruction::LdhToA(imm));
+        self
+    }
+
+    /// `ld a, [imm]`
+    /// 
+    /// Load the byte in `a` into the immediate 16-bit address
+    fn ld_a_from_ind(&mut self, imm: Addr) -> &mut Self {
+        self.push_instruction(Instruction::LdAFromInd(imm));
+        self
+    }
+
+    /// bit `bit`, `reg`
+    /// 
+    /// Tests bit `bit` of `reg`, setting the Zero flag if not set
+    fn bit(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
+        self.push_instruction(PrefixInstruction::Bit(bit, reg).into());
+        self
+    }
+
+    /// res `bit`, `reg`
     /// 
     /// Resets bit `bit` of `reg`
-    fn res(&mut self, bit: Bit, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::Prefixed(PrefixInstruction::Res(bit, reg)));
+    fn res(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
+        self.push_instruction(PrefixInstruction::Res(bit, reg).into());
         self
     }
 
-    /// `set u3, r`
+    /// set `bit`, `reg`
     /// 
     /// Sets bit `bit` of `reg`
-    fn set(&mut self, bit: Bit, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::Prefixed(PrefixInstruction::Set(bit, reg)));
+    fn set(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
+        self.push_instruction(PrefixInstruction::Set(bit, reg).into());
+        self
+    }
+
+    /// Metadata tag for assembler usage
+    fn meta(&mut self, meta: Meta) -> &mut Self {
+        self.push_instruction(Instruction::Meta(meta));
         self
     }
 }
 
-pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocError>
-        where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError>,
-            AllocError: Clone + std::fmt::Debug + Into<Error> {
+pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<Meta, Error, AllocError>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
+            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError>,
+            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
     /// [BasicBlock] builder
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
-        where F: Fn(&mut BasicBlock);
+        where F: Fn(&mut BasicBlock<Meta>);
     /// [Loop] builder
     fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-        where F: Fn(&mut LoopBlock);
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, Error>;
+        where F: Fn(&mut LoopBlock<Meta>);
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AllocError>;
 
-    fn set_palette(&mut self, palette: CgbPalette, colors: [Color; 4]) -> Result<(), Error> {
+    fn set_palette(&mut self, palette: CgbPalette, colors: [Color; 4]) -> Result<(), AllocError> {
         use GpRegister::*;
         use RegisterPair::*;
 
@@ -192,7 +202,7 @@ pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocE
             block.ld_r8_imm(A, PaletteSelector::new(true, palette).into());
             block.ldh_from_a(IoReg::Bcps.into());
 
-            let counter = block.new_var(colors.len() as u8);
+            let counter = block.new_var(colors.len() as u16);
             block.loop_block(LoopCondition::Countdown { counter, end: 0 }, |block| {
                 block.ld_a_from_r16(IndirectPair::HLInc).ldh_from_a(IoReg::Bcpd.into());
             });
@@ -209,7 +219,7 @@ pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocE
         self.ld_r16_imm(BC, src);
         self.ld_r8_imm(D, len);
         // let counter = Variable::StaticR8(D);
-        let counter = self.new_var(len);
+        let counter = self.new_var(len as u16);
 
         self.loop_block(LoopCondition::Countdown { counter , end: 0 }, |block| {
             block.ld_a_from_r16(IndirectPair::BC);
@@ -218,7 +228,7 @@ pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocE
         });
     }
 
-    fn write_tile_data(&mut self, area: TiledataSelector, idx: TileIdx, data: &Tile) -> Result<(), Error> {
+    fn write_tile_data(&mut self, area: TiledataSelector, idx: TileIdx, data: &Tile) -> Result<(), AllocError> {
         let src = self.new_const(&data.as_bytes())?;
         let dest = area.from_idx(idx);
 
@@ -258,7 +268,7 @@ pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocE
     fn disable_lcd_now(&mut self) {
         self.basic_block(|block| {
             block.ldh_to_a(IoReg::Lcdc.into());
-            block.res(Bit::_7, GpRegister::A);
+            block.res(GpRegister::A, Bit::_7);
             block.ldh_from_a(IoReg::Lcdc.into());
         });
     }
@@ -266,7 +276,7 @@ pub trait MacroAssembler<Error, AllocError>: Assembler + Variabler<Error, AllocE
     fn enable_lcd_now(&mut self) {
         self.basic_block(|block| {
             block.ldh_to_a(IoReg::Lcdc.into());
-            block.set(Bit::_7, GpRegister::A);
+            block.set(GpRegister::A, Bit::_7);
             block.ldh_from_a(IoReg::Lcdc.into());
         });
     }
@@ -281,10 +291,6 @@ pub trait Context {
         *self.next_id_mut() += 1;
 
         out
-    }
-
-    fn new_ctx(&mut self) -> Ctx {
-        Ctx::Set(self.new_id_inner())
     }
 
     fn new_id(&mut self) -> Id {

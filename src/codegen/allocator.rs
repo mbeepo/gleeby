@@ -1,16 +1,26 @@
 use crate::memory::Addr;
 
-use super::{variables::{ConfirmedVariable, MemoryVariable, RegVariable}, Ctx, Id};
+use super::{variables::{Variable, RegSelector}, Id};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct GpRegisters {
-    pub a: Option<(Id, Ctx)>,
-    pub b: Option<(Id, Ctx)>,
-    pub c: Option<(Id, Ctx)>,
-    pub d: Option<(Id, Ctx)>,
-    pub e: Option<(Id, Ctx)>,
-    pub h: Option<(Id, Ctx)>,
-    pub l: Option<(Id, Ctx)>,
+    pub a: Option<Id>,
+    pub b: Option<Id>,
+    pub c: Option<Id>,
+    pub d: Option<Id>,
+    pub e: Option<Id>,
+    pub h: Option<Id>,
+    pub l: Option<Id>,
+}
+
+impl GpRegisters {
+    fn alloc_reg(&mut self, kind: RegKind) -> Result<RegSelector, ConstAllocError> {
+        
+    }
+
+    fn dealloc_reg(&mut self, reg: RegSelector) {
+        self.registers.dealloc(reg)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,8 +32,7 @@ pub struct AllocGroup {
 }
 
 impl AllocGroup {
-    pub fn alloc(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
-        let len = data.len();
+    pub fn alloc(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
         let addr = self.next;
 
         if addr + len as u16 > self.len {
@@ -41,12 +50,6 @@ pub struct ConstAllocator {
     pub constants: AllocGroup,
     pub variables: AllocGroup,
     pub registers: GpRegisters,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ConstAllocError {
-    OutOfMemory,
-    TooBigForRegister,
 }
 
 impl Default for ConstAllocator {
@@ -72,23 +75,52 @@ impl Default for ConstAllocator {
     }
 }
 
-impl Allocator<ConstAllocError> for ConstAllocator {
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
-        self.constants.alloc(data)
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstAllocError {
+    OutOfMemory,
+    TooBigForRegister,
+}
 
-    fn new_var(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
-        self.variables.alloc(data)
-    }
-
-    fn alloc_reg(&mut self, var: ConfirmedVariable) -> Result<RegVariable, ConstAllocError> {
-        todo!()
+impl AllocErrorTrait for ConstAllocError {
+    fn oversized_reg() -> Self {
+        Self::TooBigForRegister
     }
 }
 
-pub trait Allocator<Error>: std::fmt::Debug
-        where Error: Clone + std::fmt::Debug {
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, Error>;
-    fn new_var(&mut self, data: &[u8]) -> Result<Addr, Error>;
-    fn alloc_reg(&mut self, var: ConfirmedVariable) -> Result<RegVariable, Error>;
+impl Allocator<ConstAllocError> for ConstAllocator {
+    fn alloc_reg(&mut self, var: Variable) -> Result<RegSelector, ConstAllocError> {
+        self.registers.alloc(var.len.into())
+    }
+
+    fn dealloc_reg(&mut self, reg: RegSelector) {
+        self.registers.dealloc(reg)
+    }
+
+    fn alloc_const(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
+        self.constants.alloc(len)
+    }
+
+    fn alloc_var(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
+        self.variables.alloc(len)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegKind {
+    GpRegister,
+    RegisterPair,
+}
+
+pub trait Allocator<AllocError>: std::fmt::Debug
+        where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
+    fn alloc_reg(&mut self, kind: RegKind) -> Result<RegSelector, AllocError>;
+    fn dealloc_reg(&mut self, reg: RegSelector);
+    fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;
+    fn dealloc_const(&mut self, addr: Addr);
+    fn alloc_var(&mut self, len: u16) -> Result<Addr, AllocError>;
+    fn dealloc_var(&mut self, addr: Addr);
+}
+
+pub trait AllocErrorTrait: Clone + std::fmt::Debug {
+    fn oversized_reg() -> Self;
 }

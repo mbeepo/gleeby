@@ -1,4 +1,4 @@
-use crate::codegen::Id;
+use crate::codegen::{meta_instr::MetaInstructionTrait, Id};
 
 use super::{CpuFlag, GpRegister, IndirectPair, RegisterPair, StackPair};
 
@@ -17,7 +17,8 @@ pub enum Bit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Instruction {
+pub enum Instruction<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     LdR16Imm(RegisterPair, u16),
     LdAFromR16(IndirectPair),
     IncR16(RegisterPair),
@@ -33,11 +34,12 @@ pub enum Instruction {
     Push(StackPair),
     Prefixed(PrefixInstruction),
     LdhFromA(u8),
-    LdIndFromA(u16),
+    LdAToInd(u16),
     LdhToA(u8),
     LdAFromInd(u16),
     /// pretend this is an actual instruction (won't be emitted into the rom)
     Label(Id),
+    Meta(Meta),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -47,7 +49,8 @@ pub enum PrefixInstruction {
     Set(Bit, GpRegister),
 }
 
-impl Instruction {
+impl<Meta> Instruction<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     pub const PREFIX: u8 = 0xcb;
 
     pub fn len(&self) -> usize {
@@ -69,10 +72,11 @@ impl Instruction {
             Push(_) => 1,
             Prefixed(_) => 2,
             LdhFromA(_) => 2,
-            LdIndFromA(_) => 3,
+            LdAToInd(_) => 3,
             LdhToA(_) => 2,
             LdAFromInd(_) => 3,
             Label(_) => 0,
+            Meta(meta) => todo!(),
         }
     }
 
@@ -95,10 +99,11 @@ impl Instruction {
             Self::Push(_) => 0xc5,
             Self::Prefixed(_) => 0xcb,
             Self::LdhFromA(_) => 0xe0,
-            Self::LdIndFromA(_) => 0xea,
+            Self::LdAToInd(_) => 0xea,
             Self::LdhToA(_) => 0xf0,
             Self::LdAFromInd(_) => 0xfa,
             Self::Label(_) => 0xd3, // illegal opcode since these shouldnt be emitted
+            Self::Meta(_) => 0xe3, // another illegal opcode since these shouldnt be directly emitted
         }
     }
 }
@@ -113,8 +118,9 @@ impl PrefixInstruction {
     }
 }
 
-impl From<Instruction> for Vec<u8> {
-    fn from(value: Instruction) -> Self {
+impl<Meta> From<Instruction<Meta>> for Vec<u8>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: Instruction<Meta>) -> Self {
         use Instruction::*;
         let mut out: Vec<u8> = Vec::with_capacity(3);
         out.push(value.base());
@@ -173,5 +179,12 @@ impl From<PrefixInstruction> for u8 {
                 base + reg_offset + bit_offset
             },
         }
+    }
+}
+
+impl<Meta> From<PrefixInstruction> for Instruction<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(value: PrefixInstruction) -> Self {
+        Self::Prefixed(value)
     }
 }

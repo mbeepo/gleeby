@@ -1,41 +1,56 @@
 use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
-use crate::codegen::assembler::{AsBuf, Context};
-use crate::codegen::variables::{MemoryVariable, RegVariable, Variabler};
+use crate::codegen::assembler::Context;
+use crate::codegen::meta_instr::MetaInstructionTrait;
+use crate::codegen::variables::Variabler;
 use crate::codegen::{Assembler, AssemblerError, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
-use crate::codegen::{Ctx, IdInner, Variable};
+use crate::codegen::{IdInner, Variable};
 use crate::cpu::instructions::Instruction;
 use crate::memory::Addr;
 
 use super::EmitterError;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct BasicBlock {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     next_id: IdInner,
     pub allocator: ConstAllocator,
-    pub ctx: Ctx,
-    pub variables: Vec<(Vec<u8>, Variable)>,
-    pub contents: Vec<Block>,
+    pub variables: Vec<Variable>,
+    pub contents: Vec<Block<Meta>>,
     pub consts: Vec<(Addr, Vec<u8>)>,
 }
 
-impl From<Vec<Instruction>> for BasicBlock {
-    fn from(instructions: Vec<Instruction>) -> Self {
+impl<Meta> Default for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn default() -> Self {
+        Self {
+            next_id: Default::default(),
+            allocator: Default::default(),
+            variables: Default::default(),
+            contents: Default::default(),
+            consts: Default::default(),
+        }
+    }
+}
+
+impl<Meta> From<Vec<Instruction<Meta>>> for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn from(instructions: Vec<Instruction<Meta>>) -> Self {
         Self { 
             contents: vec![instructions.into()],
             next_id: Default::default(),
             allocator: ConstAllocator::default(),
-            ctx: Default::default(),
             variables: Default::default(),
             consts: Default::default(),
         }
     }
 }
 
-impl TryFrom<&BasicBlock> for Vec<u8>  {
+impl<Meta> TryFrom<&BasicBlock<Meta>> for Vec<u8>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Error = Vec<EmitterError>;
 
-    fn try_from(value: &BasicBlock) -> Result<Self, Self::Error> {
+    fn try_from(value: &BasicBlock<Meta>) -> Result<Self, Self::Error> {
         let (out, errors) = value.contents.iter().fold((Vec::with_capacity(8), Vec::with_capacity(4)), |mut acc, instruction| {
             let out: Result<Vec<u8>, Self::Error> = instruction.try_into();
 
@@ -55,17 +70,19 @@ impl TryFrom<&BasicBlock> for Vec<u8>  {
     }
 }
 
-impl Assembler for BasicBlock {
-    fn push_instruction(&mut self, instruction: Instruction) {
+impl<Meta> Assembler<Meta> for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+
+    fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.push_buf(&[instruction])
     }
 
-    fn push_buf(&mut self, buf: &[Instruction]) {
+    fn push_buf(&mut self, buf: &[Instruction<Meta>]) {
         if let Some(Block::Raw(block)) = self.contents.last_mut() {
-            block.0.extend(buf);
+            block.0.extend(buf.to_vec());
         } else {
-            let mut new: Vec<Instruction> = Vec::with_capacity(buf.len() + 2);
-            new.extend(buf);
+            let mut new: Vec<Instruction<Meta>> = Vec::with_capacity(buf.len() + 2);
+            new.extend(buf.to_vec());
             self.contents.push(new.into());
         }
     }
@@ -75,13 +92,13 @@ impl Assembler for BasicBlock {
     }
 }
 
-impl Variabler<AssemblerError, ConstAllocError> for BasicBlock {
+impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Alloc = ConstAllocator;
 
-    fn new_var<T>(&mut self, initial: T) -> Variable
-           where T: AsBuf {
-        let var = Variable::Unallocated { id: self.new_id(), ctx: self.new_ctx() };
-        self.variables.push((initial.as_buf(), var));
+    fn new_var(&mut self, len: u16) -> Variable {
+        let var = Variable::Unallocated { len, id: self.new_id() };
+        self.variables.push(var);
         var
     }
 
@@ -90,38 +107,35 @@ impl Variabler<AssemblerError, ConstAllocError> for BasicBlock {
     }
 }
 
-impl MacroAssembler<AssemblerError, ConstAllocError> for BasicBlock {
+impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn basic_block<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut BasicBlock) {
-        let mut block: BasicBlock = Vec::with_capacity(4).into();
+            where F: Fn(&mut BasicBlock<Meta>) {
+        let mut block: BasicBlock<Meta> = Vec::with_capacity(4).into();
         inner(&mut block);
 
-        let ctx = self.new_ctx();
-        block.ctx = ctx;
         self.contents.push(block.into());
-
         self
     }
 
     fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-            where F: Fn(&mut LoopBlock) {
-        let mut block: LoopBlock = LoopBlock::new(condition, Vec::with_capacity(4).into());
+            where F: Fn(&mut LoopBlock<Meta>) {
+        let mut block: LoopBlock<Meta> = LoopBlock::new(condition, Vec::with_capacity(4).into());
         inner(&mut block);
 
-        let ctx = self.new_ctx();
-        block.ctx = ctx;
         self.contents.push(block.into());
         self
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, AssemblerError> {
-        let addr = self.allocator.new_const(data).map_err(AssemblerError::AllocError)?;
+    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
+        let addr = self.allocator.alloc_const(data.len() as u16)?;
         self.consts.push((addr, data.to_vec()));
         Ok(addr)
     }
 }
 
-impl Context for BasicBlock {
+impl<Meta> Context for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn next_id(&self) -> IdInner {
         self.next_id
     }
@@ -131,8 +145,9 @@ impl Context for BasicBlock {
     }
 }
 
-impl AsRef<BasicBlock> for BasicBlock {
-    fn as_ref(&self) -> &BasicBlock {
+impl<Meta> AsRef<BasicBlock<Meta>> for BasicBlock<Meta>
+    where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+    fn as_ref(&self) -> &BasicBlock<Meta> {
         self
     }
 }
