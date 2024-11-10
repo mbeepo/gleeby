@@ -22,10 +22,17 @@ pub enum Variable {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Constant {
+pub struct MemoryConstant {
     pub id: Id,
     pub addr: Addr,
     pub len: u16,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Constant {
+    Immediate8(u8),
+    Immediate16(u16),
+    Addr(MemoryConstant)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -67,6 +74,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
 
     fn new_var(&mut self, len: u16) -> Variable;
     fn allocator(&mut self) -> &mut Self::Alloc;
+    fn load_const(&mut self) -> Result<Constant, Error>;
 
     fn load_var(&mut self, var: Variable) -> Result<RegVariable, Error> {
         let out = match var {
@@ -184,12 +192,18 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
             VarOrConst::Var(src_var) => {
                 let src = self.load_var(src_var)?;
                 match (dest, src) {
-                    (RegVariable::R8 { reg: _dest, ..} | RegVariable::MemR8 { reg: _dest, .. },
-                        RegVariable::R8 { reg: _src, .. } | RegVariable::MemR8 { reg: _src, .. }) => todo!(),
-                    (RegVariable::R16 { reg_pair: _dest, ..} | RegVariable::MemR16 { reg_pair: _dest, .. },
-                        RegVariable::R16 { reg_pair: _src, .. } | RegVariable::MemR16 { reg_pair: _src, .. }) => todo!(),
+                    (RegVariable::R8 { reg: dest, ..} | RegVariable::MemR8 { reg: dest, .. },
+                        RegVariable::R8 { reg: src, .. } | RegVariable::MemR8 { reg: src, .. }) => { self.ld_r8_from_r8(dest, src); },
+                    (RegVariable::R16 { reg_pair: dest, ..} | RegVariable::MemR16 { reg_pair: dest, .. },
+                        RegVariable::R16 { reg_pair: src, .. } | RegVariable::MemR16 { reg_pair: src, .. }) => {
+                            let (dest1, dest2) = dest.try_split()?;
+                            let (src1, src2) = src.try_split()?;
+
+                            self.ld_r8_from_r8(dest1, src1);
+                            self.ld_r8_from_r8(dest2, src2);
+                        },
                     (RegVariable::UnallocatedR8(_) | RegVariable::UnallocatedR16(_), _)
-                    | (_, RegVariable::UnallocatedR8(_)| RegVariable::UnallocatedR16(_)) => self.meta(Meta::set_var(var, value)),
+                    | (_, RegVariable::UnallocatedR8(_)| RegVariable::UnallocatedR16(_)) => { self.meta(Meta::set_var(var, value)); },
                     (RegVariable::R8 { .. } | RegVariable::MemR8 { .. },
                         RegVariable::R16 { .. } | RegVariable::MemR16 { .. })
                     | (RegVariable::R16 { .. } | RegVariable::MemR16 { .. },
@@ -197,7 +211,13 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 };
             }
             VarOrConst::Const(src_const) => {
-                todo!()
+                match (dest, src_const) {
+                    (RegVariable::R8 { reg: dest, ..} | RegVariable::MemR8 { reg: dest, .. },
+                        Constant::Immediate8(src)) => { self.ld_r8_imm(dest, src); },
+                    (RegVariable::R16 { reg_pair: dest, .. } | RegVariable::MemR16 { reg_pair: dest, .. },
+                        Constant::Immediate16(src)) => { self.ld_r16_imm(dest, src); },
+                    _ => todo!()
+                }
             }
         }
 
