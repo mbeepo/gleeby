@@ -1,20 +1,26 @@
-use super::Variable;
+use super::{variables::Constant, Variable};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarOrConst {
+    Var(Variable),
+    Const(Constant),
+}
 
 pub trait MetaInstructionTrait {
-    fn var_ld(dest: Variable, src: Variable) -> Self;
-    fn var_from_mem(dest: Variable, src: Variable) -> Self;
-    fn var_to_mem(dest: Variable, src: Variable) -> Self;
-    fn var_add(lhs: Variable, rhs: Variable) -> Self;
-    fn var_inc(var: Variable) -> Self;
-    fn var_sub(lhs: Variable, rhs: Variable) -> Self;
-    fn var_dec(var: Variable) -> Self;
+    fn set_var(dest: Variable, src: VarOrConst) -> Self;
+    fn var_from_ind(dest: Variable, src: Variable) -> Self;
+    fn var_to_ind(dest: Variable, src: Variable) -> Self;
+    fn add_var(lhs: Variable, rhs: Variable) -> Self;
+    fn inc_var(var: Variable) -> Self;
+    fn sub_var(lhs: Variable, rhs: Variable) -> Self;
+    fn dec_var(var: Variable) -> Self;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MetaInstruction {
-    VarLd { dest: Variable, src: Variable },
-    VarFromMem { dest: Variable, src: Variable },
-    VarToMem { dest: Variable, src: Variable },
+    VarSet { dest: Variable, src: VarOrConst },
+    VarFromInd { dest: Variable, src: Variable },
+    VarToInd { dest: Variable, src: Variable },
     VarAdd { lhs: Variable, rhs: Variable },
     VarInc { var: Variable },
     VarSub { lhs: Variable, rhs: Variable },
@@ -22,31 +28,31 @@ pub enum MetaInstruction {
 }
 
 impl MetaInstructionTrait for MetaInstruction {
-    fn var_ld(dest: Variable, src: Variable) -> Self {
-        Self::VarLd { dest, src }
+    fn set_var(dest: Variable, src: VarOrConst) -> Self {
+        Self::VarSet { dest, src }
     }
 
-    fn var_from_mem(dest: Variable, src: Variable) -> Self {
-        Self::VarFromMem { dest, src }
+    fn var_from_ind(dest: Variable, src: Variable) -> Self {
+        Self::VarFromInd { dest, src }
     }
 
-    fn var_to_mem(dest: Variable, src: Variable) -> Self {
-        Self::VarToMem { dest, src }
+    fn var_to_ind(dest: Variable, src: Variable) -> Self {
+        Self::VarToInd { dest, src }
     }
 
-    fn var_add(lhs: Variable, rhs: Variable) -> Self {
+    fn add_var(lhs: Variable, rhs: Variable) -> Self {
         Self::VarAdd { lhs, rhs }
     }
 
-    fn var_inc(var: Variable) -> Self {
+    fn inc_var(var: Variable) -> Self {
         Self::VarInc { var }
     }
 
-    fn var_sub(lhs: Variable, rhs: Variable) -> Self {
+    fn sub_var(lhs: Variable, rhs: Variable) -> Self {
         Self::VarSub { lhs, rhs }
     }
 
-    fn var_dec(var: Variable) -> Self {
+    fn dec_var(var: Variable) -> Self {
         Self::VarDec { var }
     }
 }

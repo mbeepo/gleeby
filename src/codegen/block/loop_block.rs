@@ -1,6 +1,6 @@
 use crate::{
     codegen::{
-        allocator::{Allocator, ConstAllocError, ConstAllocator}, assembler::AsBuf, meta_instr::MetaInstructionTrait, variables::Variabler, Assembler, AssemblerError, MacroAssembler, Variable
+        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
@@ -8,10 +8,10 @@ use crate::{
             Instruction
         },
         CpuFlag
-    }, memory::Addr
+    }
 };
 
-use super::{basic_block::BasicBlock, EmitterError};
+use super::{basic_block::BasicBlock, Block, BlockTrait};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LoopCondition {
@@ -23,13 +23,13 @@ pub enum LoopCondition {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoopBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     pub condition: LoopCondition,
     pub inner: BasicBlock<Meta>,
 }
 
 impl<Meta> LoopBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     const JR_LEN: usize = 2;
 
     pub fn new(condition: LoopCondition, inner: BasicBlock<Meta>) -> Self {
@@ -47,11 +47,13 @@ impl<Meta> LoopBlock<Meta>
     }
 }
 
-impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
-    type Error = Vec<EmitterError>;
+impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+    type Error = Vec<AssemblerError>;
 
-    fn try_from(value: &LoopBlock<Meta>) -> Result<Self, Self::Error> {
+    fn try_from(value: LoopBlock<Meta>) -> Result<Self, Self::Error> {
+        let mut errs: Self::Error = Vec::new();
+
         // when jumping backwards the offset must include the Jr itself (2 bytes)
         let block_length = value.inner.len() + LoopBlock::<Meta>::JR_LEN;
 
@@ -60,7 +62,7 @@ impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
             todo!("Loop body too big")
         }
 
-        let jump: Vec<u8> = match value.condition {
+        let jump: Result<Vec<u8>, Self::Error> = match value.condition {
             LoopCondition::Native(condition) => {
                 let mut buffer = BasicBlock::<Meta>::default();
                 buffer.jr(condition, block_length as i8 * -1);
@@ -68,8 +70,10 @@ impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
             },
             LoopCondition::Countdown { counter, end } => {
                 if end == 0 {
-                    let mut buffer = BasicBlock::default();
-                    buffer.dec_var(counter);
+                    let mut buffer = BasicBlock::<Meta>::default();
+                    if let Err(err) = buffer.dec_var(counter) {
+                        errs.push(err);
+                    }
 
                     let block_length = block_length + buffer.len();
                     
@@ -83,16 +87,29 @@ impl<Meta> TryFrom<&LoopBlock<Meta>> for Vec<u8>
                     todo!()
                 }
             }
-        }.as_ref().try_into()?;
+        }.try_into();
 
-        let mut out: Vec<u8> = (&value.inner).try_into()?;
-        out.extend(jump);
-        Ok(out)
+        let mut out: Vec<u8> = value.inner.try_into()?;
+        
+        match jump {
+            Ok(jump) => {
+                out.extend(jump);
+            }
+            Err(err) => {
+                errs.extend(err);
+            }
+        }
+
+        if errs.len() > 0 {
+            Err(errs)
+        } else {
+            Ok(out)
+        }
     }
 }
 
 impl<Meta> Assembler<Meta> for LoopBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.inner.push_instruction(instruction);
     }
@@ -107,7 +124,7 @@ impl<Meta> Assembler<Meta> for LoopBlock<Meta>
 }
 
 impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     type Alloc = ConstAllocator;
 
     fn new_var(&mut self, len: u16) -> Variable {
@@ -120,20 +137,30 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
 }
 
 impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
-    fn basic_block<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut BasicBlock<Meta>) {
-        self.inner.basic_block(inner);
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+    fn basic_block(&mut self) -> &mut BasicBlock<Meta> {
+        self.inner.basic_block()
+    }
+
+    fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<Meta> {
+        self.inner.loop_block(condition);
         self
     }
 
-    fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-            where F: Fn(&mut LoopBlock<Meta>) {
-        self.inner.loop_block(condition, inner);
-        self
-    }
-
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
+    fn new_const(&mut self, data: &[u8]) -> Result<Constant, AssemblerError> {
         self.inner.new_const(data)
+    }
+}
+
+impl<Meta> BlockTrait for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+    type Contents = Vec<Block<Meta>>;
+        
+    fn contents(&self) -> &Self::Contents {
+        &self.inner.contents
+    }
+
+    fn contents_mut(&mut self) -> &mut Self::Contents {
+        &mut self.inner.contents
     }
 }

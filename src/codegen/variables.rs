@@ -1,8 +1,8 @@
 use std::hash::Hash;
 
-use crate::{codegen::allocator::RegKind, cpu::{GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::Addr};
+use crate::{codegen::allocator::RegKind, cpu::{GpRegister, RegisterPair, SplitError, StackPair}, memory::Addr};
 
-use super::{allocator::{AllocErrorTrait, Allocator}, meta_instr::MetaInstructionTrait, Assembler};
+use super::{allocator::{AllocErrorTrait, Allocator}, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler};
 
 pub(crate) type IdInner = usize;
 
@@ -19,6 +19,13 @@ pub enum Variable {
     Unallocated { len: u16, id: Id },
     Reg(RegVariable),
     Memory(MemoryVariable),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Constant {
+    pub id: Id,
+    pub addr: Addr,
+    pub len: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,21 +47,35 @@ pub enum RegSelector {
     R16(RegisterPair),
 }
 
+impl From<GpRegister> for RegSelector {
+    fn from(value: GpRegister) -> Self {
+        Self::R8(value)
+    }
+}
+
+impl From<RegisterPair> for RegSelector {
+    fn from(value: RegisterPair) -> Self {
+        Self::R16(value)
+    }
+}
+
 pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError>,
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait,
-            Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait + MetaInstructionTrait {
+            Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Alloc: Allocator<AllocError>;
 
     fn new_var(&mut self, len: u16) -> Variable;
     fn allocator(&mut self) -> &mut Self::Alloc;
-
 
     fn load_var(&mut self, var: Variable) -> Result<RegVariable, Error> {
         let out = match var {
             Variable::Memory(var) => {
                 match RegKind::<AllocError>::try_from_len(var.len)? {
                     RegKind::GpRegister => {
+                        if self.allocator().reg_free(GpRegister::A.into()) {
+                            self.allocator().claim_reg(GpRegister::A.into(), Id::Set(0));
+                        }
                         if let Ok(reg) = self.allocator().alloc_reg() {
                             if reg != GpRegister::A {
                                 // will have to change which register the variable refers to that previously referred to `a`
@@ -94,7 +115,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                             if stacked {
                                 self.pop(StackPair::AF);
                             } else {
-                                self.allocator().dealloc_reg(GpRegister::A);
+                                self.allocator().dealloc_reg(GpRegister::A.into());
                             }
 
                             RegVariable::MemR16 { addr: var.addr, reg_pair, id: var.id }
@@ -139,10 +160,8 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                             // fall back to `self.ld_a_to_r16`
                             todo!()
                         }
-
-                        todo!()
                     }
-                    RegVariable::R16 { reg_pair, id } => {
+                    RegVariable::R16 { reg_pair: _, id: _ } => {
                         todo!()
                     }
                     RegVariable::MemR8 { addr, reg: _, id } => MemoryVariable { addr, len: 1, id },
@@ -159,6 +178,34 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         Ok(out)
     }
 
+    fn set_var(&mut self, var: Variable, value: VarOrConst) -> Result<&mut Self, Error> {
+        let dest = self.load_var(var)?;
+        match value {
+            VarOrConst::Var(src_var) => {
+                let src = self.load_var(src_var)?;
+                match (dest, src) {
+                    (RegVariable::R8 { reg: _dest, ..} | RegVariable::MemR8 { reg: _dest, .. },
+                        RegVariable::R8 { reg: _src, .. } | RegVariable::MemR8 { reg: _src, .. }) => todo!(),
+                    (RegVariable::R16 { reg_pair: _dest, ..} | RegVariable::MemR16 { reg_pair: _dest, .. },
+                        RegVariable::R16 { reg_pair: _src, .. } | RegVariable::MemR16 { reg_pair: _src, .. }) => todo!(),
+                    (RegVariable::UnallocatedR8(_) | RegVariable::UnallocatedR16(_), _)
+                    | (_, RegVariable::UnallocatedR8(_)| RegVariable::UnallocatedR16(_)) => self.meta(Meta::set_var(var, value)),
+                    (RegVariable::R8 { .. } | RegVariable::MemR8 { .. },
+                        RegVariable::R16 { .. } | RegVariable::MemR16 { .. })
+                    | (RegVariable::R16 { .. } | RegVariable::MemR16 { .. },
+                        RegVariable::R8 { .. } | RegVariable::MemR8 { .. }) => todo!()
+                };
+            }
+            VarOrConst::Const(src_const) => {
+                todo!()
+            }
+        }
+
+        // TODO: Constants :D
+
+        todo!()
+    }
+
     fn dec_var(&mut self, var: Variable) -> Result<&mut Self, Error> {
         let reg = self.load_var(var)?;
 
@@ -168,7 +215,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
             RegVariable::R16 { reg_pair, .. }
             | RegVariable::MemR16 { reg_pair, .. }  => self.dec_r16(reg_pair),
             RegVariable::UnallocatedR8(_)
-            | RegVariable::UnallocatedR16(_) => self.meta(Meta::var_dec(var)),
+            | RegVariable::UnallocatedR16(_) => self.meta(Meta::dec_var(var)),
         };
 
         Ok(self)

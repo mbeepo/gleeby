@@ -2,24 +2,17 @@ use crate::{codegen::{meta_instr::MetaInstructionTrait, Assembler}, cpu::instruc
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RawBlock<Meta>(pub Vec<Instruction<Meta>>)
-    where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait;
+    where Meta: Clone + std::fmt::Debug + MetaInstructionTrait;
 
 impl<Meta> From<RawBlock<Meta>> for Vec<u8>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn from(value: RawBlock<Meta>) -> Self {
-        (&value).into()
-    }
-}
-
-impl<Meta> From<&RawBlock<Meta>> for Vec<u8>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
-    fn from(value: &RawBlock<Meta>) -> Self {
-        value.0.iter().flat_map(|&instruction| { let out: Vec<u8> = instruction.into(); out }).collect()
+        value.0.into_iter().flat_map(|instruction| { let out: Vec<u8> = instruction.into(); out }).collect()
     }
 }
 
 impl<Meta> Assembler<Meta> for RawBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn push_instruction(&mut self, instruction: Instruction<Meta>) {
         self.0.push(instruction);
     }
@@ -34,7 +27,7 @@ impl<Meta> Assembler<Meta> for RawBlock<Meta>
 }
 
 impl<Meta> Default for RawBlock<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn default() -> Self {
         Self(Default::default())
     }

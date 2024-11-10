@@ -18,7 +18,7 @@ pub enum Bit {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instruction<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     LdR16Imm(RegisterPair, u16),
     LdAFromR16(IndirectPair),
     IncR16(RegisterPair),
@@ -50,7 +50,7 @@ pub enum PrefixInstruction {
 }
 
 impl<Meta> Instruction<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     pub const PREFIX: u8 = 0xcb;
 
     pub fn len(&self) -> usize {
@@ -76,7 +76,7 @@ impl<Meta> Instruction<Meta>
             LdhToA(_) => 2,
             LdAFromInd(_) => 3,
             Label(_) => 0,
-            Meta(meta) => todo!(),
+            Meta(_) => todo!(),
         }
     }
 
@@ -119,7 +119,7 @@ impl PrefixInstruction {
 }
 
 impl<Meta> From<Instruction<Meta>> for Vec<u8>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn from(value: Instruction<Meta>) -> Self {
         use Instruction::*;
         let mut out: Vec<u8> = Vec::with_capacity(3);
@@ -146,8 +146,8 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
             | DecR8(r8) => out[0] += r8 as u8 * 0x08,
             IncR16(r16)
             | DecR16(r16) => out[0] += r16 as u8 * 0x10,
-            v @ Jp(condition, _)
-            | v @ Jr(condition, _) => {
+            ref v @ Jp(condition, _)
+            | ref v @ Jr(condition, _) => {
                 out[0] += match condition {
                     Condition::Always => 0,
                     Condition::Flag(flag) => flag as u8 * 0x08,
@@ -155,7 +155,7 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
 
                 match v {
                     Jp(_, imm) => out.extend(imm.to_le_bytes()),
-                    Jr(_, imm) => out.push(imm as u8),
+                    Jr(_, imm) => out.push(*imm as u8),
                     _ => unreachable!("Filtered down to just Jp|Jr in the outer match")
                 }
             },
@@ -187,7 +187,7 @@ impl From<PrefixInstruction> for u8 {
 }
 
 impl<Meta> From<PrefixInstruction> for Instruction<Meta>
-        where Meta: Clone + Copy + std::fmt::Debug + MetaInstructionTrait {
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     fn from(value: PrefixInstruction) -> Self {
         Self::Prefixed(value)
     }

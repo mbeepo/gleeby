@@ -5,7 +5,7 @@ use super::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use super::assembler::Context;
 use super::block::Block;
 use super::meta_instr::MetaInstruction;
-use super::variables::{Variable, IdInner, Variabler};
+use super::variables::{Constant, IdInner, Variable, Variabler};
 use super::{Assembler, AssemblerError, BasicBlock, Id, LoopBlock, LoopCondition, MacroAssembler};
 use crate::cpu::instructions::Instruction;
 use crate::cpu::Condition;
@@ -26,7 +26,7 @@ pub struct Cgb {
     handlers: InterruptHandlers,
     allocator: ConstAllocator,
     next_id: IdInner,
-    consts: Vec<(Addr, Vec<u8>)>,
+    consts: HashMap<Id, (Constant, Vec<u8>)>,
     variables: HashMap<Id, Variable>,
 }
 
@@ -45,12 +45,12 @@ impl Cgb {
             tilemap: TilemapSelector::Tilemap9800,
             handlers: Default::default(),
             next_id: 1,
-            consts: Vec::with_capacity(4),
+            consts: HashMap::with_capacity(4),
             variables: HashMap::with_capacity(4),
         }
     }
 
-    pub fn save(&self, file: &mut File) -> io::Result<()>{
+    pub fn save(self, file: &mut File) -> io::Result<()>{
         // set CGB mode
         file.seek(io::SeekFrom::Start(0x143))?;
         file.write_all(&[0x80])?;
@@ -60,12 +60,12 @@ impl Cgb {
         file.seek(io::SeekFrom::Start(0x100))?;
         file.write_all(&trampoline)?;
     
-        let output: Vec<u8> = self.output.iter().flat_map(|block| { let out: Vec<u8> = block.try_into().expect("Blorp"); out }).collect::<Vec<u8>>();
+        let output: Vec<u8> = self.output.into_iter().flat_map(|block| { let out: Vec<u8> = block.try_into().expect("Blorp"); out }).collect::<Vec<u8>>();
         file.seek(io::SeekFrom::Start(0x150))?;
         file.write_all(&output)?;
 
-        for (addr, bytes) in &self.consts {
-            file.seek(io::SeekFrom::Start(*addr as u64))?;
+        for (constant, bytes) in self.consts.values() {
+            file.seek(io::SeekFrom::Start(constant.addr as u64))?;
             file.write_all(&bytes)?;
         }
 
@@ -82,7 +82,7 @@ impl Assembler<MetaInstruction> for Cgb {
         if let Some(Block::Raw(block)) = self.output.last_mut() {
             block.0.extend(buf.to_vec());
         } else {
-            let mut new: Vec<Instruction<MetaInstruction>> = Vec::with_capacity(buf.len() + 2);
+            let mut new = Vec::with_capacity(buf.len() + 2);
             new.extend(buf.to_vec());
             self.output.push(new.into());
         }
@@ -102,7 +102,7 @@ impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
         self.variables.insert(id, var);
         var
     }
-
+    
     fn allocator(&mut self) -> &mut Self::Alloc {
         &mut self.allocator
     }
@@ -110,30 +110,41 @@ impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
 
 impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     /// [BasicBlock] builder
-    fn basic_block<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut BasicBlock<MetaInstruction>) {
-        let mut block: BasicBlock<MetaInstruction> = Vec::with_capacity(4).into();
-        inner(&mut block);
-
+    fn basic_block(&mut self) -> &mut BasicBlock<MetaInstruction> {
+        let block: BasicBlock<_> = Vec::with_capacity(4).into();
         self.output.push(block.into());
-        self
+
+        if let Block::Basic(ref mut last) = self.output.last_mut().unwrap() {
+            last
+        } else {
+            unreachable!()
+        }
     }
 
     /// [Loop] builder
-    fn loop_block<F>(&mut self, condition: LoopCondition, inner: F) -> &mut Self
-           where F: Fn(&mut LoopBlock<MetaInstruction>) {
-        let mut block: LoopBlock<MetaInstruction> = LoopBlock::new(condition, Vec::with_capacity(4).into());
-        inner(&mut block);
-
+    fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<MetaInstruction> {
+        let block: LoopBlock<_> = LoopBlock::<_>::new(condition, Vec::with_capacity(4).into());
         self.output.push(block.into());
-        self
+        
+        if let Block::Loop(ref mut last) = self.output.last_mut().unwrap() {
+            last
+        } else {
+            unreachable!()
+        }
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<Addr, ConstAllocError> {
+    fn new_const(&mut self, data: &[u8]) -> Result<Constant, AssemblerError> {
         let addr = self.allocator.alloc_const(data.len() as u16)?;
-        self.consts.push((addr, data.to_vec()));
+        let id = self.new_id();
+        let constant = Constant {
+            id,
+            addr,
+            len: data.len() as u16
+        };
 
-        Ok(addr)
+        self.consts.insert(id, (constant, data.to_vec()));
+
+        Ok(constant)
     }
 }
 

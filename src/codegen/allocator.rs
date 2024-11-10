@@ -1,8 +1,8 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, ops::{Index, IndexMut}};
 
 use crate::{cpu::{GpRegister, RegisterPair}, memory::Addr};
 
-use super::Id;
+use super::{variables::RegSelector, Id};
 
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub struct GpRegisters {
@@ -13,6 +13,7 @@ pub struct GpRegisters {
     pub e: Option<Id>,
     pub h: Option<Id>,
     pub l: Option<Id>,
+    bleh: Option<Id>,
 }
 
 impl GpRegisters {
@@ -21,6 +22,7 @@ impl GpRegisters {
     }
 
     fn dealloc(&mut self, reg: GpRegister) {
+        let _ = reg;
         todo!()
     }
 
@@ -29,7 +31,80 @@ impl GpRegisters {
     }
 
     fn dealloc_pair(&mut self, reg_pair: RegisterPair) {
+        let _ = reg_pair;
         todo!()
+    }
+
+    fn claim(&mut self, reg: RegSelector, id: Id) {
+        match reg {
+            RegSelector::R8(r8) => self[r8] = Some(id),
+            RegSelector::R16(r16) => {
+                if let Ok((reg1, reg2)) = r16.try_split() {
+                    self[reg1] = Some(id);
+                    self[reg2] = Some(id);
+                }
+            }
+        }
+    }
+
+    fn free(&mut self, reg: RegSelector) {
+        match reg {
+            RegSelector::R8(r8) => self[r8] = None,
+            RegSelector::R16(r16) => {
+                if let Ok((reg1, reg2)) = r16.try_split() {
+                    self[reg1] = None;
+                    self[reg2] = None;
+                }
+            }
+        }
+    }
+
+    fn is_claimed(&self, reg: RegSelector) -> bool {
+        match reg {
+            RegSelector::R8(r8) => self[r8] != None,
+            RegSelector::R16(r16) => {
+                if let Ok((reg1, reg2)) = r16.try_split() {
+                    self[reg1] != None && self[reg2] != None
+                } else {
+                    false
+                }
+            }
+        }
+    }
+}
+
+impl Index<GpRegister> for GpRegisters {
+    type Output = Option<Id>;
+
+    fn index(&self, index: GpRegister) -> &Self::Output {
+        use GpRegister::*;
+        match index {
+            A => &self.a,
+            B => &self.b,
+            C => &self.c,
+            D => &self.d,
+            E => &self.e,
+            H => &self.h,
+            L => &self.l,
+            IndHL => &None,
+        }
+    }
+}
+
+impl IndexMut<GpRegister> for GpRegisters {
+    fn index_mut(&mut self, index: GpRegister) -> &mut Self::Output {
+        use GpRegister::*;
+
+        match index {
+            A => &mut self.a,
+            B => &mut self.b,
+            C => &mut self.c,
+            D => &mut self.d,
+            E => &mut self.e,
+            H => &mut self.h,
+            L => &mut self.l,
+            IndHL => &mut self.bleh,
+        }
     }
 }
 
@@ -102,16 +177,20 @@ impl Allocator<ConstAllocError> for ConstAllocator {
         self.registers.alloc()
     }
 
-    fn dealloc_reg(&mut self, reg: GpRegister) {
-        self.registers.dealloc(reg)
+    fn dealloc_reg(&mut self, reg: RegSelector) {
+        self.registers.free(reg)
+    }
+
+    fn claim_reg(&mut self, reg: RegSelector, id: Id) {
+        self.registers.claim(reg, id);
+    }
+
+    fn reg_free(&self, reg: RegSelector) -> bool {
+        self.registers.is_claimed(reg)
     }
 
     fn alloc_reg_pair(&mut self) -> Result<RegisterPair, ConstAllocError> {
         self.registers.alloc_pair()
-    }
-
-    fn dealloc_reg_pair(&mut self, reg_pair: RegisterPair) {
-        self.registers.dealloc_pair(reg_pair);
     }
 
     fn alloc_const(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
@@ -144,9 +223,12 @@ impl<AllocError> RegKind<AllocError>
 pub trait Allocator<AllocError>: std::fmt::Debug
         where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
     fn alloc_reg(&mut self) -> Result<GpRegister, AllocError>;
-    fn dealloc_reg(&mut self, reg: GpRegister);
+    fn dealloc_reg(&mut self, reg: RegSelector);
+    /// Claims a specific register/register pair for the given ID
+    fn claim_reg(&mut self, reg: RegSelector, id: Id);
+    /// Returns true if the selected register is unallocated
+    fn reg_free(&self, reg: RegSelector) -> bool;
     fn alloc_reg_pair(&mut self) -> Result<RegisterPair, AllocError>;
-    fn dealloc_reg_pair(&mut self, reg_pair: RegisterPair);
     fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;
     fn alloc_var(&mut self, len: u16) -> Result<Addr, AllocError>;
 }
