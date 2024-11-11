@@ -18,21 +18,48 @@ pub struct GpRegisters {
 
 impl GpRegisters {
     fn alloc(&mut self) -> Result<GpRegister, ConstAllocError> {
-        todo!()
-    }
-
-    fn dealloc(&mut self, reg: GpRegister) {
-        let _ = reg;
-        todo!()
+        if self.a == None {
+            self.a = Some(Id::Unset);
+            Ok(GpRegister::A)
+        } else if self.b == None {
+            self.b = Some(Id::Unset);
+            Ok(GpRegister::B)
+        } else if self.c == None {
+            self.c = Some(Id::Unset);
+            Ok(GpRegister::C)
+        } else if self.d == None {
+            self.d = Some(Id::Unset);
+            Ok(GpRegister::D)
+        } else if self.e == None {
+            self.e = Some(Id::Unset);
+            Ok(GpRegister::E)
+        } else if self.h == None {
+            self.h = Some(Id::Unset);
+            Ok(GpRegister::H)
+        } else if self.l == None {
+            self.l = Some(Id::Unset);
+            Ok(GpRegister::L)
+        } else {
+            Err(ConstAllocError::OutOfRegisters)
+        }
     }
 
     fn alloc_pair(&mut self) -> Result<RegisterPair, ConstAllocError> {
-        todo!()
-    }
-
-    fn dealloc_pair(&mut self, reg_pair: RegisterPair) {
-        let _ = reg_pair;
-        todo!()
+        if self.b == None && self.c == None {
+            self.b = Some(Id::Unset);
+            self.c = Some(Id::Unset);
+            Ok(RegisterPair::BC)
+        } else if self.d == None && self.e == None {
+            self.d = Some(Id::Unset);
+            self.e = Some(Id::Unset);
+            Ok(RegisterPair::DE)
+        } else if self.h == None && self.l == None {
+            self.h = Some(Id::Unset);
+            self.l = Some(Id::Unset);
+            Ok(RegisterPair::HL)
+        } else {
+            Err(ConstAllocError::OutOfRegisters)
+        }
     }
 
     fn claim(&mut self, reg: RegSelector, id: Id) {
@@ -128,6 +155,11 @@ impl AllocGroup {
             Ok(addr)
         }
     }
+
+    pub fn dealloc(&mut self, addr: Addr) -> Result<(), ConstAllocError> {
+        // bumpy
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -163,6 +195,7 @@ impl Default for ConstAllocator {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ConstAllocError {
     OutOfMemory,
+    OutOfRegisters,
     TooBigForRegister,
 }
 
@@ -177,7 +210,7 @@ impl Allocator<ConstAllocError> for ConstAllocator {
         self.registers.alloc()
     }
 
-    fn dealloc_reg(&mut self, reg: RegSelector) {
+    fn release_reg(&mut self, reg: RegSelector) {
         self.registers.free(reg)
     }
 
@@ -185,7 +218,7 @@ impl Allocator<ConstAllocError> for ConstAllocator {
         self.registers.claim(reg, id);
     }
 
-    fn reg_free(&self, reg: RegSelector) -> bool {
+    fn reg_is_used(&self, reg: RegSelector) -> bool {
         self.registers.is_claimed(reg)
     }
 
@@ -199,6 +232,10 @@ impl Allocator<ConstAllocError> for ConstAllocator {
 
     fn alloc_var(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
         self.variables.alloc(len)
+    }
+
+    fn dealloc_var(&mut self, addr: Addr) -> Result<(), ConstAllocError> {
+        self.variables.dealloc(addr)
     }
 }
 
@@ -223,14 +260,15 @@ impl<AllocError> RegKind<AllocError>
 pub trait Allocator<AllocError>: std::fmt::Debug
         where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
     fn alloc_reg(&mut self) -> Result<GpRegister, AllocError>;
-    fn dealloc_reg(&mut self, reg: RegSelector);
+    fn release_reg(&mut self, reg: RegSelector);
     /// Claims a specific register/register pair for the given ID
     fn claim_reg(&mut self, reg: RegSelector, id: Id);
     /// Returns true if the selected register is unallocated
-    fn reg_free(&self, reg: RegSelector) -> bool;
+    fn reg_is_used(&self, reg: RegSelector) -> bool;
     fn alloc_reg_pair(&mut self) -> Result<RegisterPair, AllocError>;
     fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;
     fn alloc_var(&mut self, len: u16) -> Result<Addr, AllocError>;
+    fn dealloc_var(&mut self, addr: Addr) -> Result<(), AllocError>;
 }
 
 pub trait AllocErrorTrait: Clone + std::fmt::Debug {

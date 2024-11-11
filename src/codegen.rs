@@ -6,6 +6,7 @@ pub mod meta_instr;
 pub mod variables;
 
 use allocator::ConstAllocError;
+use assembler::ErrorTrait;
 pub use assembler::{
     Assembler,
     MacroAssembler,
@@ -28,14 +29,17 @@ pub use variables::{
 
 pub(crate) use variables::IdInner;
 
-use crate::cpu::{GpRegister, IndirectPair, RegisterPair, SplitError, StackPair};
+use crate::cpu::{GpRegister, IndirectPair, RegConversionError, RegisterPair, SplitError, StackPair};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssemblerError {
     AllocError(ConstAllocError),
     EmitterError(EmitterError),
     RegSplitError(SplitError),
+    ConversionError(RegConversionError),
 }
+
+impl ErrorTrait for AssemblerError {}
 
 impl From<ConstAllocError> for AssemblerError {
     fn from(value: ConstAllocError) -> Self {

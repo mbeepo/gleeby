@@ -34,8 +34,10 @@ pub enum Instruction<Meta>
     Push(StackPair),
     Prefixed(PrefixInstruction),
     LdhFromA(u8),
+    LdhFromAWithC,
     LdAToInd(u16),
     LdhToA(u8),
+    LdhToAWithC,
     LdAFromInd(u16),
     /// pretend this is an actual instruction (won't be emitted into the rom)
     Label(Id),
@@ -72,8 +74,10 @@ impl<Meta> Instruction<Meta>
             Push(_) => 1,
             Prefixed(_) => 2,
             LdhFromA(_) => 2,
+            LdhFromAWithC => 1,
             LdAToInd(_) => 3,
             LdhToA(_) => 2,
+            LdhToAWithC => 1,
             LdAFromInd(_) => 3,
             Label(_) => 0,
             Meta(_) => todo!(),
@@ -99,8 +103,10 @@ impl<Meta> Instruction<Meta>
             Self::Push(_) => 0xc5,
             Self::Prefixed(_) => 0xcb,
             Self::LdhFromA(_) => 0xe0,
+            Self::LdhFromAWithC => 0xe2,
             Self::LdAToInd(_) => 0xea,
             Self::LdhToA(_) => 0xf0,
+            Self::LdhToAWithC => 0xf2,
             Self::LdAFromInd(_) => 0xfa,
             Self::Label(_) => 0xd3, // illegal opcode since these shouldnt be emitted
             Self::Meta(_) => 0xe3, // another illegal opcode since these shouldnt be directly emitted
@@ -162,6 +168,8 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
             Push(r16)
             | Pop(r16) => out[0] += r16 as u8 * 0x10,
             Prefixed(instruction) => out.push(instruction.into()),
+            LdhFromAWithC
+            | LdhToAWithC => {},
             Label(_) => {},
             Meta(_) => unimplemented!("Metainstruction unevaluated"),
             // e => unimplemented!("There is no {:?}", e)

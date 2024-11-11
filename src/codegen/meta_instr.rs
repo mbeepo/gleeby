@@ -6,6 +6,18 @@ pub enum VarOrConst {
     Const(Constant),
 }
 
+impl From<Variable> for VarOrConst {
+    fn from(value: Variable) -> Self {
+        Self::Var(value)
+    }
+}
+
+impl From<Constant> for VarOrConst {
+    fn from(value: Constant) -> Self {
+        Self::Const(value)
+    }
+}
+
 pub trait MetaInstructionTrait {
     fn set_var(dest: Variable, src: VarOrConst) -> Self;
     fn var_from_ind(dest: Variable, src: Variable) -> Self;

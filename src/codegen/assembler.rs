@@ -1,6 +1,6 @@
-use crate::{codegen::block::BlockTrait, cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector}};
+use crate::{codegen::{block::BlockTrait, variables::RegSelector}, cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx}, TiledataSelector, TilemapSelector}};
 
-use super::{allocator::{AllocErrorTrait, ConstAllocError}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
+use super::{allocator::{AllocErrorTrait, Allocator, ConstAllocError}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, StoredConstant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
 pub trait Assembler<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
@@ -121,6 +121,14 @@ pub trait Assembler<Meta>
         self
     }
 
+    /// `ld [$ff00+c], a`
+    /// 
+    /// Load the byte in `a` into the zero page offset by `c`
+    fn ldh_from_a_with_c(&mut self) -> &mut Self {
+        self.push_instruction(Instruction::LdhFromAWithC);
+        self
+    }
+
     /// `ld [imm], a`
     /// 
     /// Load the byte at the immediate 16-bit address into `a`
@@ -134,6 +142,14 @@ pub trait Assembler<Meta>
     /// Load the byte in the zero page at offset `imm` into `a`
     fn ldh_to_a(&mut self, imm: u8) -> &mut Self {
         self.push_instruction(Instruction::LdhToA(imm));
+        self
+    }
+
+    /// `ld a, [$ff00+c],
+    /// 
+    /// Load the byte in `a` into the zero page offset by `c`
+    fn ldh_to_a_with_c(&mut self) -> &mut Self {
+        self.push_instruction(Instruction::LdhToAWithC);
         self
     }
 
@@ -178,53 +194,72 @@ pub trait Assembler<Meta>
 
 pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<Meta, Error, AllocError>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
-            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError>, // TODO: Not this
+            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
     /// [BasicBlock] builder
     fn basic_block(&mut self) -> &mut BasicBlock<Meta>;
     /// [Loop] builder
     fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<Meta>;
-    fn new_const(&mut self, data: &[u8]) -> Result<Constant, Error>;
+    fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, Error>;
+    fn new_inline_const_r8(&mut self, data: u8) -> Constant;
+    fn new_inline_const_r16(&mut self, data: u16) -> Constant;
+    fn free_var(&mut self, var: Variable) -> Result<(), Error>;
+    fn evaluate_meta(&mut self) -> Result<(), Error>;
+    fn gather_consts(&mut self) -> Vec<(Constant, Vec<u8>)>;
 
     fn set_palette(&mut self, palette: CgbPalette, colors: [Color; 4]) -> Result<(), Error> {
         use GpRegister::*;
         use RegisterPair::*;
 
         let colors: Vec<u8> = colors.iter().flat_map(|color| color.0.to_be_bytes()).collect();
-        let addr = self.new_const(&colors)?;
+        let addr = self.new_stored_const(&colors)?;
+
+        self.allocator().claim_reg(RegSelector::R16(RegisterPair::HL), Id::Unset);
+        self.allocator().claim_reg(RegSelector::R8(GpRegister::A), Id::Unset);
 
         let block = self.basic_block().open(|block| {
             block.ld_r16_imm(HL, addr.addr);
             block.ld_r8_imm(A, PaletteSelector::new(true, palette).into());
             block.ldh_from_a(IoReg::Bcps.into());
+            block.ok()
         });
         
         let counter = block.init_var(colors.len() as u16)?;
         block.loop_block(LoopCondition::Countdown { counter, end: 0 }).open(|block| {
             block.ld_a_from_r16(IndirectPair::HLInc).ldh_from_a(IoReg::Bcpd.into());
+            block.ok()
         });
 
+        self.allocator().release_reg(RegSelector::R16(RegisterPair::HL));
+        self.allocator().release_reg(RegSelector::R8(GpRegister::A));
         Ok(())
     }
 
     fn copy(&mut self, src: Addr, dest: Addr, len: u8) -> Result<(), Error> {
         use RegisterPair::*;
-
+        
+        self.allocator().claim_reg(RegSelector::R16(RegisterPair::HL), Id::Unset);
+        self.allocator().claim_reg(RegSelector::R8(GpRegister::A), Id::Unset);
         self.ld_r16_imm(HL, dest);
-        self.ld_r16_imm(BC, src);
+
         let counter = self.init_var(len)?;
 
         self.loop_block(LoopCondition::Countdown { counter , end: 0 }).open(|block| {
-            block.ld_a_from_r16(IndirectPair::BC);
+            let mut data_pointer = block.init_var(src)?;
+            let _ = block.ld_a_from_var_ind(&mut data_pointer);
             block.ld_a_to_r16(IndirectPair::HLInc);
-            block.inc_r16(BC);
+            let _ = block.inc_var(&mut data_pointer);
+            block.ok()
         });
+
+        self.allocator().release_reg(RegSelector::R16(RegisterPair::HL));
+        self.allocator().release_reg(RegSelector::R8(GpRegister::A));
 
         Ok(())
     }
 
     fn write_tile_data(&mut self, area: TiledataSelector, idx: TileIdx, data: &Tile) -> Result<(), Error> {
-        let src = self.new_const(&data.as_bytes())?;
+        let src = self.new_stored_const(&data.as_bytes())?;
         let dest = area.from_idx(idx);
 
         self.basic_block().copy(src.addr, dest, Tile::MEM_SIZE as u8)?;
@@ -238,6 +273,9 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
         use GpRegister::*;
         use RegisterPair::*;
 
+        self.allocator().claim_reg(RegSelector::R16(RegisterPair::HL), Id::Unset);
+        self.allocator().claim_reg(RegSelector::R8(GpRegister::A), Id::Unset);
+
         self.basic_block().open(|block| {
             block.ld_r16_imm(HL, selector.base());
 
@@ -250,7 +288,12 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
                     block.ld_a_to_r16(IndirectPair::HLInc);
                 }
             }
+            
+            block.ok()
         });
+
+        self.allocator().release_reg(RegSelector::R16(RegisterPair::HL));
+        self.allocator().release_reg(RegSelector::R8(GpRegister::A));
     }
 
     fn set_sprite(&mut self, sprite: Sprite, idx: SpriteIdx) {
@@ -262,29 +305,50 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
     /// 
     /// This should only be called during VBlank: [https://gbdev.io/pandocs/LCDC.html#lcdc7--lcd-enable]
     fn disable_lcd_now(&mut self) {
+        self.allocator().claim_reg(RegSelector::R8(GpRegister::A), Id::Unset);
+        
         self.basic_block().open(|block| {
             block.ldh_to_a(IoReg::Lcdc.into());
             block.res(GpRegister::A, Bit::_7);
             block.ldh_from_a(IoReg::Lcdc.into());
+            block.ok()
         });
+
+        self.allocator().release_reg(RegSelector::R8(GpRegister::A));
     }
 
     fn enable_lcd_now(&mut self) {
+        self.allocator().claim_reg(RegSelector::R8(GpRegister::A), Id::Unset);
+        
         self.basic_block().open(|block| {
             block.ldh_to_a(IoReg::Lcdc.into());
             block.set(GpRegister::A, Bit::_7);
             block.ldh_from_a(IoReg::Lcdc.into());
+            block.ok()
         });
+
+        self.allocator().release_reg(RegSelector::R8(GpRegister::A));
     }
     
     fn init_var<T>(&mut self, value: T) -> Result<Variable, Error>
-            where T: AsBuf {
-        let buf = value.as_buf();
-        let var = self.new_var(buf.len() as u16);
-        let val_const = VarOrConst::Const(self.new_const(&buf)?);
+            where T: Clone + Copy + TryInto<u8> + TryInto<u16> {
+        let out = if let Ok(value) = value.try_into() {
+            let mut val_const = VarOrConst::Const(self.new_inline_const_r8(value));
+            let mut var = self.new_var(1);
+            
+            self.set_var(&mut var, &mut val_const)?;
+            var
+        } else if let Ok(value) = value.try_into() {
+            let mut val_const = VarOrConst::Const(self.new_inline_const_r16(value));
+            let mut var = self.new_var(2);
+            
+            self.set_var(&mut var, &mut val_const)?;
+            var
+        } else {
+            return Err(AllocError::oversized_load().into())
+        };
 
-        self.set_var(var, val_const)?;
-        Ok(var)
+        Ok(out)
     }
 }
 
@@ -318,4 +382,8 @@ impl AsBuf for u16 {
     fn as_buf(&self) -> Vec<u8> {
         self.to_le_bytes().to_vec()
     }
+}
+
+pub trait ErrorTrait {
+    fn invalid_arg() -> Self where Self: Sized { todo!() }
 }

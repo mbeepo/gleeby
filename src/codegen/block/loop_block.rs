@@ -1,13 +1,13 @@
 use crate::{
     codegen::{
-        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
+        allocator::{AllocErrorTrait, ConstAllocError, ConstAllocator}, assembler::ErrorTrait, meta_instr::MetaInstructionTrait, variables::{Constant, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
             Condition,
             Instruction
         },
-        CpuFlag
+        CpuFlag, SplitError
     }
 };
 
@@ -51,7 +51,7 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     type Error = Vec<AssemblerError>;
 
-    fn try_from(value: LoopBlock<Meta>) -> Result<Self, Self::Error> {
+    fn try_from(mut value: LoopBlock<Meta>) -> Result<Self, Self::Error> {
         let mut errs: Self::Error = Vec::new();
 
         // when jumping backwards the offset must include the Jr itself (2 bytes)
@@ -68,9 +68,10 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
-            LoopCondition::Countdown { counter, end } => {
+            LoopCondition::Countdown { ref mut counter, end } => {
                 if end == 0 {
                     let mut buffer = BasicBlock::<Meta>::default();
+                    dbg!(&counter);
                     if let Err(err) = buffer.dec_var(counter) {
                         errs.push(err);
                     }
@@ -147,13 +148,35 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<M
         self
     }
 
-    fn new_const(&mut self, data: &[u8]) -> Result<Constant, AssemblerError> {
-        self.inner.new_const(data)
+    fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, AssemblerError> {
+        self.inner.new_stored_const(data)
+    }
+
+    fn new_inline_const_r8(&mut self, data: u8) -> Constant {
+        self.inner.new_inline_const_r8(data)
+    }
+
+    fn new_inline_const_r16(&mut self, data: u16) -> Constant {
+        self.inner.new_inline_const_r16(data)
+    }
+
+    fn free_var(&mut self, var: Variable) -> Result<(), AssemblerError> {
+        self.inner.free_var(var)
+    }
+
+    fn evaluate_meta(&mut self) -> Result<(), AssemblerError> {
+        self.inner.evaluate_meta()
+    }
+
+    fn gather_consts(&mut self) -> Vec<(Constant, Vec<u8>)> {
+        self.inner.gather_consts()
     }
 }
 
-impl<Meta> BlockTrait for LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+impl<Meta, Error, AllocError> BlockTrait<Error, AllocError> for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
+            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
+            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
     type Contents = Vec<Block<Meta>>;
         
     fn contents(&self) -> &Self::Contents {

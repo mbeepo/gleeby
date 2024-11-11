@@ -65,3 +65,20 @@ pub enum IndirectPair {
     BC, DE,
     HLInc, HLDec,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegConversionError {
+    InvalidIndirectPair,
+}
+
+impl TryInto<IndirectPair> for RegisterPair {
+    type Error = RegConversionError;
+
+    fn try_into(self) -> Result<IndirectPair, Self::Error> {
+        match self {
+            Self::BC => Ok(IndirectPair::BC),
+            Self::DE => Ok(IndirectPair::DE),
+            _ => Err(RegConversionError::InvalidIndirectPair)
+        }
+    }
+}

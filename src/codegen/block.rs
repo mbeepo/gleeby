@@ -2,9 +2,9 @@ use basic_block::BasicBlock;
 use loop_block::LoopBlock;
 use raw_block::RawBlock;
 
-use crate::cpu::instructions::Instruction;
+use crate::cpu::{instructions::Instruction, SplitError};
 
-use super::{meta_instr::MetaInstructionTrait, Assembler, AssemblerError, Variable};
+use super::{allocator::{AllocErrorTrait, ConstAllocError}, assembler::ErrorTrait, meta_instr::MetaInstructionTrait, variables::Constant, Assembler, AssemblerError, MacroAssembler, Variable};
 
 pub mod basic_block;
 pub mod loop_block;
@@ -14,9 +14,19 @@ pub mod raw_block;
 pub enum Block<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     Basic(BasicBlock<Meta>),
-    Labeled(String, BasicBlock<Meta>),
     Loop(LoopBlock<Meta>),
     Raw(RawBlock<Meta>),
+}
+
+impl<Meta> Block<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+    pub fn gather_consts(&mut self) -> Vec<(Constant, Vec<u8>)> {
+        match self {
+            Self::Basic(block) => block.gather_consts(),
+            Self::Loop(block) => block.gather_consts(),
+            Self::Raw(_) => Vec::new(),
+        }
+    }
 }
 
 impl<Meta> Default for Block<Meta>
@@ -110,15 +120,21 @@ pub enum EmitterError {
     UnallocatedVariable(Variable),
 }
 
-pub trait BlockTrait {
+pub trait BlockTrait<Error, AllocError>
+        where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
+            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
     type Contents;
 
     fn contents(&self) -> &Self::Contents;
     fn contents_mut(&mut self) -> &mut Self::Contents;
 
-    fn open<F>(&mut self, inner: F) -> &mut Self
-            where F: Fn(&mut Self) {
-        inner(self);
-        self
+    fn open<F>(&mut self, inner: F) -> Result<&mut Self, Error>
+            where F: Fn(&mut Self) -> Result<(), Error> {
+        inner(self)?;
+        Ok(self)
+    }
+
+    fn ok(&self) -> Result<(), Error> {
+        Ok(())
     }
 }
