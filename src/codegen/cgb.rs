@@ -1,15 +1,15 @@
+use std::cell::{RefCell, RefMut};
 use std::io::{Seek, Write};
-use std::{collections::HashMap, fs::File, io};
+use std::rc::Rc;
+use std::{fs::File, io};
 
-use super::allocator::{Allocator, ConstAllocError, ConstAllocator};
+use super::allocator::{ConstAllocError, ConstAllocator};
 use super::assembler::Context;
-use super::block::Block;
 use super::meta_instr::MetaInstruction;
 use super::variables::{Constant, IdInner, StoredConstant, Variable, Variabler};
-use super::{Assembler, AssemblerError, BasicBlock, Id, LoopBlock, LoopCondition, MacroAssembler};
+use super::{Assembler, AssemblerError, BasicBlock, LoopBlock, LoopCondition, MacroAssembler};
 use crate::cpu::instructions::Instruction;
 use crate::cpu::Condition;
-use crate::memory::Addr;
 use crate::ppu::{palettes::Color, TilemapSelector};
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
@@ -27,13 +27,14 @@ pub struct Cgb {
 
 impl Cgb {
     pub fn new() -> Self {
-        let mut inner: BasicBlock<MetaInstruction> = BasicBlock::default();
-        inner.allocator.constants.offset = 0x07ff;
-        inner.allocator.variables.offset = 0xc000;
+        let mut allocator = ConstAllocator::default();
+        allocator.constants.offset = 0x0800;
+        allocator.variables.offset = 0xc000;
 
+        let inner: BasicBlock<MetaInstruction> = BasicBlock::new(Rc::new(RefCell::new(allocator)));
 
         Self {
-            inner: Default::default(),
+            inner,
             palettes: [[Color::WHITE; 4]; 8],
             tilemap: TilemapSelector::Tilemap9800,
             handlers: Default::default(),
@@ -44,12 +45,13 @@ impl Cgb {
         // set CGB mode
         file.seek(io::SeekFrom::Start(0x143))?;
         file.write_all(&[0x80])?;
-    
+
         // jump to main code
         let trampoline: Vec<u8> = Instruction::<MetaInstruction>::Jp(Condition::Always, 0x150).into();
         file.seek(io::SeekFrom::Start(0x100))?;
         file.write_all(&trampoline)?;
-    
+
+        // TODO: Fix constant allocation
         for (constant, bytes) in self.inner.gather_consts() {
             if let Constant::Addr(constant) = constant {
                 file.seek(io::SeekFrom::Start(constant.addr as u64))?;
@@ -87,7 +89,11 @@ impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
         self.inner.new_var(len)
     }
     
-    fn allocator(&mut self) -> &mut Self::Alloc {
+    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
+        self.inner.allocator_mut()
+    }
+
+    fn allocator(&self) -> Rc<RefCell<Self::Alloc>> {
         self.inner.allocator()
     }
 }

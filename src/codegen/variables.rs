@@ -1,4 +1,4 @@
-use std::hash::Hash;
+use std::{cell::{RefCell, RefMut}, hash::Hash, rc::Rc};
 
 use crate::{codegen::allocator::RegKind, cpu::{GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::Addr};
 
@@ -85,22 +85,21 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     type Alloc: Allocator<AllocError>;
 
     fn new_var(&mut self, len: u16) -> Variable;
-    fn allocator(&mut self) -> &mut Self::Alloc;
+    fn allocator(&self) -> Rc<RefCell<Self::Alloc>>;
+    fn allocator_mut(&mut self) -> RefMut<Self::Alloc>;
 
     fn load_var(&mut self, var: &mut Variable) -> Result<RegVariable, Error> {
+        let allocator = self.allocator();
         let out = match var {
             Variable::Memory(var) => {
                 match RegKind::<AllocError>::try_from_len(var.len)? {
                     RegKind::GpRegister => {
-                        if !self.allocator().reg_is_used(GpRegister::A.into()) {
-                            self.allocator().claim_reg(GpRegister::A.into(), Id::Set(0));
-                        }
-                        if let Ok(reg) = self.allocator().alloc_reg() {
+                        if let Ok(reg) = allocator.borrow_mut().alloc_reg() {
                             if reg != GpRegister::A {
                                 // will have to change which register the variable refers to that previously referred to `a`
                                 self.ld_r8_from_r8(reg, GpRegister::A);
                             }
-                            
+
                             self.ld_a_from_ind(var.addr);
                             RegVariable::MemR8 { addr: var.addr, reg, id: var.id }
                         } else {
@@ -108,21 +107,19 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                         }
                     }
                     RegKind::RegisterPair => {
-                        if let Ok(reg_pair) = self.allocator().alloc_reg_pair() {
+                        let allocated = allocator.borrow_mut().alloc_reg_pair();
+                        if let Ok(reg_pair) = allocated {
                             let (reg1, reg2): (GpRegister, GpRegister) = reg_pair.try_split()?;
-                            let tmp = self.allocator().alloc_reg();
+                            let tmp = allocator.borrow_mut().alloc_reg();
 
-                            let stacked = if let Ok(tmp) = tmp {
+                            // swap the current value of `a` into a temporary register
+                            let (swapped, tmp_reg) = if let Ok(tmp) = tmp {
                                 if tmp != GpRegister::A {
-                                    // will have to change which register the variable refers to that previously referred to `a`
                                     self.ld_r8_from_r8(tmp, GpRegister::A);
                                 }
 
-                                false
-                            } else {
-                                self.push(StackPair::AF);
-                                true
-                            };
+                                (true, Some(tmp))
+                            } else { (false, None) };
                             
                             // 40t cycles
                             // 8 bytes
@@ -131,14 +128,16 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                             self.ld_a_from_ind(var.addr + 1);
                             self.ld_r8_from_r8(reg1, GpRegister::A);
 
-                            if stacked {
-                                self.pop(StackPair::AF);
-                            } else {
-                                self.allocator().release_reg(GpRegister::A.into());
+                            // swap the old value back into `a`
+                            if swapped {
+                                let tmp_reg = tmp_reg.unwrap();
+                                self.ld_r8_from_r8(GpRegister::A, tmp_reg);
+                                allocator.borrow_mut().release_reg(tmp_reg.into());
                             }
 
                             RegVariable::MemR16 { addr: var.addr, reg_pair, id: var.id }
                         } else {
+                            dbg!(allocator.borrow());
                             todo!("Swap variable to memory")
                         }
                     }
@@ -161,13 +160,14 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     }
 
     fn store_var(&mut self, var: Variable) -> Result<MemoryVariable, Error> {
+        let allocator = self.allocator();
         let out = match var {
             Variable::Memory(var) => var,
             Variable::Reg(reg) => {
                 match reg {
                     RegVariable::R8 { reg, id } => {
-                        let addr = self.allocator().alloc_var(1)?;
-                        let tmp = self.allocator().alloc_reg();
+                        let addr = allocator.borrow_mut().alloc_var(1)?;
+                        let tmp = allocator.borrow_mut().alloc_reg();
 
                         if let Ok(tmp) = tmp {
                             if tmp == GpRegister::A {
@@ -198,7 +198,29 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     }
 
     fn set_var(&mut self, var: &mut Variable, value: &mut VarOrConst) -> Result<&mut Self, Error> {
-        let dest = self.load_var(var)?;
+        let allocator = self.allocator();
+        let dest = match *var {
+            Variable::Reg(var) => var,
+            Variable::Memory(var) => match RegKind::<AllocError>::try_from_len(var.len) {
+                Ok(RegKind::GpRegister) => RegVariable::MemR8 { reg: allocator.borrow_mut().alloc_reg()?, addr: var.addr, id: var.id },
+                Ok(RegKind::RegisterPair) => RegVariable::MemR16 { reg_pair: allocator.borrow_mut().alloc_reg_pair()?, addr: var.addr, id: var.id },
+                _ => panic!("Variable too long to set like this"),
+            },
+            Variable::Unallocated { len, id } => match RegKind::<AllocError>::try_from_len(len) {
+                Ok(RegKind::GpRegister) => {
+                    let out = RegVariable::R8 { reg: allocator.borrow_mut().alloc_reg()?, id };
+                    *var = out.into();
+                    out
+                },
+                Ok(RegKind::RegisterPair) => {
+                    let out = RegVariable::R16 { reg_pair: allocator.borrow_mut().alloc_reg_pair()?, id };
+                    *var = out.into();
+                    out
+                },
+                _ => panic!("Variable too long to set like this"),
+            }
+        };
+
         match value {
             VarOrConst::Var(src_var) => {
                 let src = self.load_var(src_var)?;
@@ -214,7 +236,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                             self.ld_r8_from_r8(dest2, src2);
                         },
                     (RegVariable::UnallocatedR8(id), _) => {
-                        let addr = self.allocator().alloc_var(1)?;
+                        let addr = allocator.borrow_mut().alloc_var(1)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 1, id });
                         let reg = self.load_var(&mut reg)?;
 
@@ -222,7 +244,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                         *var = reg.into();
                     }
                     (RegVariable::UnallocatedR16(id), _) => {
-                        let addr = self.allocator().alloc_var(2)?;
+                        let addr = allocator.borrow_mut().alloc_var(2)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 2, id });
                         let reg = self.load_var(&mut reg)?;
 
@@ -245,7 +267,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                     (RegVariable::R16 { reg_pair: dest, .. } | RegVariable::MemR16 { reg_pair: dest, .. },
                         Constant::Addr(constant)) => { self.ld_r16_imm(dest, constant.addr); },
                     (RegVariable::UnallocatedR8(id), _) => {
-                        let addr = self.allocator().alloc_var(1)?;
+                        let addr = allocator.borrow_mut().alloc_var(1)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 1, id });
                         let reg = self.load_var(&mut reg)?;
 
@@ -253,7 +275,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                         *var = reg.into();
                     }
                     (RegVariable::UnallocatedR16(id), _) => {
-                        let addr = self.allocator().alloc_var(2)?;
+                        let addr = allocator.borrow_mut().alloc_var(2)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 2, id });
                         let reg = self.load_var(&mut reg)?;
 

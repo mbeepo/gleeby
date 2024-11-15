@@ -1,14 +1,15 @@
+use std::cell::{RefCell, RefMut};
 use std::collections::HashMap;
+use std::rc::Rc;
 
-use crate::codegen::allocator::{AllocErrorTrait, Allocator, ConstAllocError, ConstAllocator};
-use crate::codegen::assembler::{Context, ErrorTrait};
+use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
+use crate::codegen::assembler::Context;
 use crate::codegen::meta_instr::MetaInstructionTrait;
 use crate::codegen::variables::{Constant, RegVariable, StoredConstant, Variabler};
 use crate::codegen::{Assembler, AssemblerError, Id, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
 use crate::codegen::{IdInner, Variable};
 use crate::cpu::instructions::Instruction;
-use crate::cpu::SplitError;
 
 use super::BlockTrait;
 
@@ -17,36 +18,49 @@ pub struct BasicBlock<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     next_id: IdInner,
     pub contents: Vec<Block<Meta>>,
-    pub allocator: ConstAllocator,
+    pub allocator: Rc<RefCell<ConstAllocator>>,
     pub variables: HashMap<Id, Variable>,
     pub consts: HashMap<Id, (StoredConstant, Vec<u8>)>,
 }
 
-impl<Meta> Default for BasicBlock<Meta>
+// impl<Meta> Default for BasicBlock<Meta>
+//         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+//     fn default() -> Self {
+//         Self {
+//             next_id: Default::default(),
+//             contents: Default::default(),
+//             allocator: Default::default(),
+//             variables: Default::default(),
+//             consts: Default::default(),
+//         }
+//     }
+// }
+
+impl<Meta> BasicBlock<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
-    fn default() -> Self {
+    pub fn new(allocator: Rc<RefCell<ConstAllocator>>) -> Self {
         Self {
             next_id: Default::default(),
-            contents: Default::default(),
-            allocator: Default::default(),
+            contents: Vec::with_capacity(4),
+            allocator,
             variables: Default::default(),
             consts: Default::default(),
         }
     }
 }
 
-impl<Meta> From<Vec<Instruction<Meta>>> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
-    fn from(instructions: Vec<Instruction<Meta>>) -> Self {
-        Self { 
-            next_id: Default::default(),
-            contents: vec![instructions.into()],
-            allocator: ConstAllocator::default(),
-            variables: Default::default(),
-            consts: Default::default(),
-        }
-    }
-}
+// impl<Meta> From<Vec<Instruction<Meta>>> for BasicBlock<Meta>
+//         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
+//     fn from(instructions: Vec<Instruction<Meta>>) -> Self {
+//         Self { 
+//             next_id: Default::default(),
+//             contents: vec![instructions.into()],
+//             allocator: ConstAllocator::default(),
+//             variables: Default::default(),
+//             consts: Default::default(),
+//         }
+//     }
+// }
 
 impl<Meta> TryFrom<BasicBlock<Meta>> for Vec<u8>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
@@ -103,16 +117,20 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
         self.variables.insert(id, var);
         var
     }
+
+    fn allocator(&self) -> Rc<RefCell<ConstAllocator>> {
+        self.allocator.clone()
+    }
     
-    fn allocator(&mut self) -> &mut Self::Alloc {
-        &mut self.allocator
+    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
+        self.allocator.borrow_mut()
     }
 }
 
 impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn basic_block(&mut self) -> &mut BasicBlock<Meta> {
-        let block: BasicBlock<Meta> = Vec::with_capacity(4).into();
+        let block: BasicBlock<Meta> = BasicBlock::new(self.allocator.clone());
         self.contents.push(Block::Basic(block));
 
         if let Block::Basic(ref mut last) = self.contents.last_mut().unwrap() {
@@ -123,7 +141,7 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
     }
 
     fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<Meta> {
-        let block: LoopBlock<Meta> = LoopBlock::<Meta>::new(condition, Vec::with_capacity(4).into());
+        let block: LoopBlock<Meta> = LoopBlock::<Meta>::new(condition, BasicBlock::new(self.allocator.clone()));
         self.contents.push(block.into());
 
         if let Block::Loop(ref mut last) = self.contents.last_mut().unwrap() {
@@ -134,7 +152,7 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
     }
 
     fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, AssemblerError> {
-        let addr = self.allocator.alloc_const(data.len() as u16)?;
+        let addr = self.allocator.borrow_mut().alloc_const(data.len() as u16)?;
         let id = self.new_id();
         let constant = StoredConstant {
             id,
@@ -156,36 +174,19 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
     }
 
     fn free_var(&mut self, var: Variable) -> Result<(), AssemblerError> {
+        self.allocator_mut().dealloc_var(var)?;
+        
         match var {
-            Variable::Reg(var) => {
-                match var {
-                    RegVariable::R8 { reg, id } => {
-                        self.variables.remove(&id);
-                        self.allocator.release_reg(reg.into());
-                    },
-                    RegVariable::MemR8 { addr, reg, id } => {
-                        self.variables.remove(&id);
-                        self.allocator.release_reg(reg.into());
-                        self.allocator.dealloc_var(addr)?;
-                    },
-                    RegVariable::R16 { reg_pair, id } => {
-                        self.variables.remove(&id);
-                        self.allocator.release_reg(reg_pair.into());
-                    },
-                    RegVariable::MemR16 { addr, reg_pair, id } => {
-                        self.variables.remove(&id);
-                        self.allocator.release_reg(reg_pair.into());
-                        self.allocator.dealloc_var(addr)?;
-                    },
-                    RegVariable::UnallocatedR8(id)
-                    | RegVariable::UnallocatedR16(id) => {
-                        self.variables.remove(&id);
-                    }
-                }
+            Variable::Reg(RegVariable::R8 { id, .. })
+            | Variable::Reg(RegVariable::MemR8 { id, .. })
+            | Variable::Reg(RegVariable::R16 { id, .. })
+            | Variable::Reg(RegVariable::MemR16 { id, .. })
+            | Variable::Reg(RegVariable::UnallocatedR8(id))
+            | Variable::Reg(RegVariable::UnallocatedR16(id)) => {
+                self.variables.remove(&id);
             }
             Variable::Memory(var) => {
                 self.variables.remove(&var.id);
-                self.allocator.dealloc_var(var.addr)?;
             }
             Variable::Unallocated { .. } => {}
         }
@@ -223,10 +224,8 @@ impl<Meta> AsRef<BasicBlock<Meta>> for BasicBlock<Meta>
     }
 }
 
-impl<Meta, Error, AllocError> BlockTrait<Error, AllocError> for BasicBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
-            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
-            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
+impl<Meta> BlockTrait for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Contents = Vec<Block<Meta>>;
 
     fn contents(&self) -> &Self::Contents {

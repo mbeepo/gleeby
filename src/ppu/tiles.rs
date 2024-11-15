@@ -1,3 +1,7 @@
+use std::{io::Read, ops::Index};
+
+use crate::codegen::AssemblerError;
+
 use super::{ConversionError, palettes::PaletteColor};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -60,3 +64,34 @@ impl Tile {
 }
 
 pub type TileIdx = u8;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tilemap {
+    pub map: [TileIdx; 32 * 32],
+}
+
+impl Tilemap {
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+}
+
+impl From<[u8; 32 * 32]> for Tilemap {
+    fn from(value: [u8; 32 * 32]) -> Self {
+        Self { map: value }
+    }
+}
+
+impl Index<u8> for Tilemap {
+    type Output = [TileIdx];
+
+    fn index(&self, index: u8) -> &Self::Output {
+        &&self.map[index as usize * 32..index as usize * 32 + 32]
+    }
+}
+
+impl<'a> From<&'a Tilemap> for &'a [u8] {
+    fn from(value: &'a Tilemap) -> Self {
+        &value.map[..]
+    }
+}

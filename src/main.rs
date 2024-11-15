@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use gleeby::{codegen::{Assembler, MacroAssembler}, cpu::instructions::Condition, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::Tile, TiledataSelector, TilemapSelector}, Cgb};
+use gleeby::{codegen::{Assembler, MacroAssembler}, cpu::instructions::Condition, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::{Tile, Tilemap}, TiledataSelector, TilemapSelector}, Cgb};
 
 fn main() {
     let mut sys = Cgb::new();
@@ -21,7 +21,8 @@ fn main() {
     sys.set_palette(CgbPalette::_0, colors).unwrap();
     sys.write_tile_data(TiledataSelector::Tiledata8000, 1, &smiley).unwrap();
     sys.write_tile_data(TiledataSelector::Tiledata8000, 2, &flat).unwrap();
-    sys.set_tilemap(TilemapSelector::Tilemap9800, |x, y| {
+
+    let setter = |x, y| {
         if (x > 8 && x < 12 && y > 8 && y < 12)
         || (y == 10 && (x == 8 || x == 12))
         || (x == 10 && (y == 8 || y == 12)) {
@@ -31,7 +32,17 @@ fn main() {
         } else {
             0
         }
-    });
+    };
+    let mut tilemap: [u8; 32 * 32] = [0; 32 * 32];
+
+    for x in 0..32 {
+        for y in 0..32 {
+            tilemap[(y * 32) + x] = setter(x, y);
+        }
+    }
+
+    sys.set_tilemap(TilemapSelector::Tilemap9800, Tilemap::from(tilemap)).unwrap();
+
     sys.enable_lcd_now();
     sys.jr(Condition::Always, -2);
 

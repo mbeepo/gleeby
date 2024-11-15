@@ -5,6 +5,8 @@ pub mod cgb;
 pub mod meta_instr;
 pub mod variables;
 
+use std::fmt::Display;
+
 use allocator::ConstAllocError;
 use assembler::ErrorTrait;
 pub use assembler::{
@@ -34,12 +36,30 @@ use crate::cpu::{GpRegister, IndirectPair, RegConversionError, RegisterPair, Spl
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AssemblerError {
     AllocError(ConstAllocError),
+    ArgumentError,
+    ConversionError(RegConversionError),
     EmitterError(EmitterError),
     RegSplitError(SplitError),
-    ConversionError(RegConversionError),
+    SizeError(usize, usize),
 }
 
-impl ErrorTrait for AssemblerError {}
+impl Display for AssemblerError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let out = if let Self::SizeError(lhs, rhs) = self {
+            format!("SizeError: Expected [u8; {lhs}], got [u8; {rhs}]")
+        } else {
+            format!("{self:?}")
+        };
+
+        write!(f, "{}", out)
+    }
+}
+
+impl ErrorTrait for AssemblerError {
+    fn invalid_arg() -> Self where Self: Sized {
+        Self::ArgumentError
+    }
+}
 
 impl From<ConstAllocError> for AssemblerError {
     fn from(value: ConstAllocError) -> Self {

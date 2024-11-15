@@ -4,7 +4,7 @@ use raw_block::RawBlock;
 
 use crate::cpu::{instructions::Instruction, SplitError};
 
-use super::{allocator::{AllocErrorTrait, ConstAllocError}, assembler::ErrorTrait, meta_instr::MetaInstructionTrait, variables::Constant, Assembler, AssemblerError, MacroAssembler, Variable};
+use super::{meta_instr::MetaInstructionTrait, variables::Constant, Assembler, AssemblerError, MacroAssembler, Variable};
 
 pub mod basic_block;
 pub mod loop_block;
@@ -120,21 +120,15 @@ pub enum EmitterError {
     UnallocatedVariable(Variable),
 }
 
-pub trait BlockTrait<Error, AllocError>
-        where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
-            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
+pub trait BlockTrait {
     type Contents;
 
     fn contents(&self) -> &Self::Contents;
     fn contents_mut(&mut self) -> &mut Self::Contents;
 
-    fn open<F>(&mut self, inner: F) -> Result<&mut Self, Error>
-            where F: Fn(&mut Self) -> Result<(), Error> {
-        inner(self)?;
-        Ok(self)
-    }
-
-    fn ok(&self) -> Result<(), Error> {
-        Ok(())
+    fn open<F>(&mut self, inner: F) -> &mut Self
+            where F: Fn(&mut Self) {
+        inner(self);
+        self
     }
 }

@@ -20,13 +20,13 @@ pub enum Bit {
 pub enum Instruction<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     LdR16Imm(RegisterPair, u16),
-    LdAFromR16(IndirectPair),
+    LdAToR16(IndirectPair),
     IncR16(RegisterPair),
     IncR8(GpRegister),
     DecR8(GpRegister),
     LdR8Imm(GpRegister, u8),
+    LdAFromR16(IndirectPair),
     DecR16(RegisterPair),
-    LdAToR16(IndirectPair),
     Jr(Condition, i8),
     LdR8FromR8(GpRegister, GpRegister),
     Pop(StackPair),
@@ -60,13 +60,13 @@ impl<Meta> Instruction<Meta>
 
         match self {
             LdR16Imm(_, _) => 3,
-            LdAFromR16(_) => 1,
+            LdAToR16(_) => 1,
             IncR16(_) => 1,
             IncR8(_) => 1,
             DecR8(_) => 1,
             LdR8Imm(_, _) => 2,
+            LdAFromR16(_) => 1,
             DecR16(_) => 1,
-            LdAToR16(_) => 1,
             Jr(_, _) => 2,
             LdR8FromR8(_, _) => 1,
             Pop(_) => 1,
@@ -87,13 +87,13 @@ impl<Meta> Instruction<Meta>
     fn base(&self) -> u8 {
         match self {
             Self::LdR16Imm(_, _) => 0x01,
-            Self::LdAFromR16(_) => 0x02,
+            Self::LdAToR16(_) => 0x02,
             Self::IncR16(_) => 0x03,
             Self::IncR8(_) => 0x04,
             Self::DecR8(_) => 0x05,
             Self::LdR8Imm(_, _) => 0x06,
-            Self::DecR16(_) => 0x08,
-            Self::LdAToR16(_) => 0x0a,
+            Self::LdAFromR16(_) => 0x0a,
+            Self::DecR16(_) => 0x0b,
             Self::Jr(Condition::Always, _) => 0x18,
             Self::Jr(Condition::Flag(_), _) => 0x20,
             Self::LdR8FromR8(_, _) => 0x40,

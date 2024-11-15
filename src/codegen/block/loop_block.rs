@@ -1,13 +1,15 @@
+use std::{cell::{RefCell, RefMut}, rc::Rc};
+
 use crate::{
     codegen::{
-        allocator::{AllocErrorTrait, ConstAllocError, ConstAllocator}, assembler::ErrorTrait, meta_instr::MetaInstructionTrait, variables::{Constant, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
+        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
             Condition,
             Instruction
         },
-        CpuFlag, SplitError
+        CpuFlag
     }
 };
 
@@ -19,6 +21,8 @@ pub enum LoopCondition {
     // Constructed conditions
     /// Decrements `counter` until it reaches `end`, then stops iterating
     Countdown { counter: Variable, end: u8 },
+    /// Increments `counter` until it reaches `end`, then stops iterating
+    Countup { counter: Variable, end: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -62,19 +66,23 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
             todo!("Loop body too big")
         }
 
+        let allocator = value.allocator();
         let jump: Result<Vec<u8>, Self::Error> = match value.condition {
             LoopCondition::Native(condition) => {
-                let mut buffer = BasicBlock::<Meta>::default();
+                let mut buffer = BasicBlock::<Meta>::new(allocator);
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
             LoopCondition::Countdown { ref mut counter, end } => {
                 if end == 0 {
-                    let mut buffer = BasicBlock::<Meta>::default();
-                    dbg!(&counter);
+                    let mut buffer = BasicBlock::<Meta>::new(allocator);
                     if let Err(err) = buffer.dec_var(counter) {
                         errs.push(err);
                     }
+                    
+                    // TODO: make compatible with register pairs
+                    // `dec r16` leaves F.Z unchanged, so we'll need to do some kind of sneakiness
+                    // especially when all registers are in use
 
                     let block_length = block_length + buffer.len();
                     
@@ -87,6 +95,21 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                 } else {
                     todo!()
                 }
+            },
+            LoopCondition::Countup { ref mut counter, end } => {
+                let mut buffer = BasicBlock::<Meta>::new(allocator);
+                if let Err(err) = buffer.inc_var(counter) {
+                    errs.push(err);
+                }
+
+                let block_length = block_length + buffer.len();
+                    
+                if block_length as isize * -1 < i8::MIN as isize {
+                    todo!("Loop body too big")
+                }
+
+                buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
+                buffer
             }
         }.try_into();
 
@@ -132,8 +155,12 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
         self.inner.new_var(len)
     }
 
-    fn allocator(&mut self) -> &mut Self::Alloc {
+    fn allocator(&self) -> Rc<RefCell<ConstAllocator>> {
         self.inner.allocator()
+    }
+
+    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
+        self.inner.allocator_mut()
     }
 }
 
@@ -173,10 +200,8 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<M
     }
 }
 
-impl<Meta, Error, AllocError> BlockTrait<Error, AllocError> for LoopBlock<Meta>
-        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
-            Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
-            AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
+impl<Meta> BlockTrait for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
     type Contents = Vec<Block<Meta>>;
         
     fn contents(&self) -> &Self::Contents {
