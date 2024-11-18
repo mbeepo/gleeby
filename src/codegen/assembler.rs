@@ -89,6 +89,14 @@ pub trait Assembler<Meta>
         self
     }
 
+    /// `cp a, r`
+    /// 
+    /// Subtract `r` from `a` without storing the result (still changes flags)
+    fn cp(&mut self, reg: GpRegister) -> &mut Self {
+        self.push_instruction(Instruction::Cp(reg));
+        self
+    }
+
     /// `pop rr`
     /// 
     /// Pops 2 bytes off the stack into `rr`

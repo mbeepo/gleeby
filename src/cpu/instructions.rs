@@ -9,6 +9,12 @@ pub enum Condition {
     Always,
 }
 
+impl From<CpuFlag> for Condition {
+    fn from(value: CpuFlag) -> Self {
+        Self::Flag(value)
+    }
+}
+
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bit {
@@ -29,6 +35,7 @@ pub enum Instruction<Meta>
     DecR16(RegisterPair),
     Jr(Condition, i8),
     LdR8FromR8(GpRegister, GpRegister),
+    Cp(GpRegister),
     Pop(StackPair),
     Jp(Condition, u16),
     Push(StackPair),
@@ -69,6 +76,7 @@ impl<Meta> Instruction<Meta>
             DecR16(_) => 1,
             Jr(_, _) => 2,
             LdR8FromR8(_, _) => 1,
+            Cp(_) => 1,
             Pop(_) => 1,
             Jp(_, _) => 3,
             Push(_) => 1,
@@ -97,6 +105,7 @@ impl<Meta> Instruction<Meta>
             Self::Jr(Condition::Always, _) => 0x18,
             Self::Jr(Condition::Flag(_), _) => 0x20,
             Self::LdR8FromR8(_, _) => 0x40,
+            Self::Cp(_) => 0xb8,
             Self::Pop(_) => 0xc1,
             Self::Jp(Condition::Flag(_), _) => 0xc2,
             Self::Jp(Condition::Always, _) => 0xc3,
@@ -149,7 +158,8 @@ impl<Meta> From<Instruction<Meta>> for Vec<u8>
             LdAFromInd(imm)
             | LdAToInd(imm) => out.extend(imm.to_le_bytes()),
             IncR8(r8)
-            | DecR8(r8) => out[0] += r8 as u8 * 0x08,
+            | DecR8(r8)
+            | Cp(r8) => out[0] += r8 as u8 * 0x08,
             IncR16(r16)
             | DecR16(r16) => out[0] += r16 as u8 * 0x10,
             ref v @ Jp(condition, _)

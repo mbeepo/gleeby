@@ -1,6 +1,6 @@
 use std::{cell::{RefCell, RefMut}, hash::Hash, rc::Rc};
 
-use crate::{codegen::allocator::RegKind, cpu::{GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::Addr};
+use crate::{codegen::allocator::RegKind, cpu::{CpuFlag, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::Addr};
 
 use super::{allocator::{AllocErrorTrait, Allocator}, assembler::ErrorTrait, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler};
 
@@ -339,6 +339,20 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
             RegVariable::UnallocatedR8(_)
             | RegVariable::UnallocatedR16(_) => { self.meta(Meta::var_from_ind(RegVariable::R8 { reg: GpRegister::A, id: Id::Unset }.into(), *var)); },
         };
+
+        Ok(self)
+    }
+
+    fn jr_z_var(&mut self, var: &mut Variable, imm: i8) -> Result<&mut Self, Error> {
+        let reg = self.load_var(var)?;
+
+        match reg {
+            RegVariable::R8 { reg, .. }
+            | RegVariable::MemR8 { reg, .. } => {
+                self.cp
+                self.jr(CpuFlag::Z.into(), imm);
+            }
+        }
 
         Ok(self)
     }

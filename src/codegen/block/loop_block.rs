@@ -59,7 +59,7 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
         let mut errs: Self::Error = Vec::new();
 
         // when jumping backwards the offset must include the Jr itself (2 bytes)
-        let block_length = value.inner.len() + LoopBlock::<Meta>::JR_LEN;
+        let block_length = value.inner.len();
 
         // Jr takes a signed 8-bit integer
         if block_length as isize * -1 < i8::MIN as isize {
@@ -84,13 +84,13 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                     // `dec r16` leaves F.Z unchanged, so we'll need to do some kind of sneakiness
                     // especially when all registers are in use
 
-                    let block_length = block_length + buffer.len();
+                    let loop_length = block_length + buffer.len() + LoopBlock::<Meta>::JR_LEN;
                     
-                    if block_length as isize * -1 < i8::MIN as isize {
+                    if loop_length as isize * -1 < i8::MIN as isize {
                         todo!("Loop body too big")
                     }
 
-                    buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
+                    buffer.jr(Condition::Flag(CpuFlag::NZ), loop_length as i8 * -1);
                     buffer
                 } else {
                     todo!()
@@ -102,13 +102,14 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                     errs.push(err);
                 }
 
-                let block_length = block_length + buffer.len();
+                let loop_length = block_length + buffer.len() + LoopBlock::<Meta>::JR_LEN;
                     
-                if block_length as isize * -1 < i8::MIN as isize {
+                if loop_length as isize * -1 < i8::MIN as isize {
                     todo!("Loop body too big")
                 }
 
-                buffer.jr(Condition::Flag(CpuFlag::NZ), block_length as i8 * -1);
+
+                buffer.jr(Condition::Flag(CpuFlag::NZ), loop_length as i8 * -1);
                 buffer
             }
         }.try_into();
