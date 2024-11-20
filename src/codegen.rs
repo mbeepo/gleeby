@@ -33,7 +33,7 @@ pub(crate) use variables::IdInner;
 
 use crate::cpu::{GpRegister, IndirectPair, RegConversionError, RegisterPair, SplitError, StackPair};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AssemblerError {
     AllocError(ConstAllocError),
     ArgumentError,
@@ -72,7 +72,7 @@ impl From<EmitterError> for AssemblerError {
         Self::EmitterError(value)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum R8Arg {
     GpRegister(GpRegister),
     Variable(Variable),
@@ -84,7 +84,7 @@ impl From<GpRegister> for R8Arg {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum R16Arg {
     RegisterPair(RegisterPair),
     Variable(Variable),
@@ -96,7 +96,7 @@ impl From<RegisterPair> for R16Arg {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum IndirectArg {
     IndirectPair(IndirectPair),
     Variable(Variable),
@@ -108,7 +108,7 @@ impl From<IndirectPair> for IndirectArg {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StackArg {
     StackPair(StackPair),
     Variable(Variable),

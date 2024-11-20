@@ -2,7 +2,7 @@ use basic_block::BasicBlock;
 use loop_block::LoopBlock;
 use raw_block::RawBlock;
 
-use crate::cpu::{instructions::Instruction, SplitError};
+use crate::cpu::instructions::Instruction;
 
 use super::{meta_instr::MetaInstructionTrait, variables::Constant, Assembler, AssemblerError, MacroAssembler, Variable};
 
@@ -115,7 +115,7 @@ impl<Meta> Assembler<Meta> for Block<Meta>
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EmitterError {
     UnallocatedVariable(Variable),
 }

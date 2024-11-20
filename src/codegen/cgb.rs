@@ -121,10 +121,6 @@ impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
         self.inner.new_inline_const_r16(data)
     }
 
-    fn free_var(&mut self, var: Variable) -> Result<(), AssemblerError> {
-        self.inner.free_var(var)
-    }
-
     fn evaluate_meta(&mut self) -> Result<(), AssemblerError> {
         self.inner.evaluate_meta()
     }

@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use crate::codegen::assembler::Context;
 use crate::codegen::meta_instr::MetaInstructionTrait;
-use crate::codegen::variables::{Constant, RegVariable, StoredConstant, Variabler};
+use crate::codegen::variables::{Constant, RcRegVariable, NoRcRegVariable, StoredConstant, Variabler};
 use crate::codegen::{Assembler, AssemblerError, Id, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
 use crate::codegen::{IdInner, Variable};
@@ -19,7 +19,7 @@ pub struct BasicBlock<Meta>
     next_id: IdInner,
     pub contents: Vec<Block<Meta>>,
     pub allocator: Rc<RefCell<ConstAllocator>>,
-    pub variables: HashMap<Id, Variable>,
+    // pub variables: HashMap<Id, Variable>,
     pub consts: HashMap<Id, (StoredConstant, Vec<u8>)>,
 }
 
@@ -43,7 +43,7 @@ impl<Meta> BasicBlock<Meta>
             next_id: Default::default(),
             contents: Vec::with_capacity(4),
             allocator,
-            variables: Default::default(),
+            // variables: Default::default(),
             consts: Default::default(),
         }
     }
@@ -114,7 +114,7 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
     fn new_var(&mut self, len: u16) -> Variable {
         let id = self.new_id();
         let var = Variable::Unallocated { len, id };
-        self.variables.insert(id, var);
+        // self.variables.insert(id, var.clone());
         var
     }
 
@@ -171,27 +171,6 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
 
     fn new_inline_const_r16(&mut self, data: u16) -> Constant {
         Constant::Inline16(data)
-    }
-
-    fn free_var(&mut self, var: Variable) -> Result<(), AssemblerError> {
-        self.allocator_mut().dealloc_var(var)?;
-        
-        match var {
-            Variable::Reg(RegVariable::R8 { id, .. })
-            | Variable::Reg(RegVariable::MemR8 { id, .. })
-            | Variable::Reg(RegVariable::R16 { id, .. })
-            | Variable::Reg(RegVariable::MemR16 { id, .. })
-            | Variable::Reg(RegVariable::UnallocatedR8(id))
-            | Variable::Reg(RegVariable::UnallocatedR16(id)) => {
-                self.variables.remove(&id);
-            }
-            Variable::Memory(var) => {
-                self.variables.remove(&var.id);
-            }
-            Variable::Unallocated { .. } => {}
-        }
-
-        Ok(())
     }
 
     fn evaluate_meta(&mut self) -> Result<(), AssemblerError> {

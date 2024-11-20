@@ -1,6 +1,6 @@
 use super::{variables::Constant, Variable};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum VarOrConst {
     Var(Variable),
     Const(Constant),
@@ -28,7 +28,7 @@ pub trait MetaInstructionTrait {
     fn dec_var(var: Variable) -> Self;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MetaInstruction {
     VarSet { dest: Variable, src: VarOrConst },
     VarFromInd { dest: Variable, src: Variable },

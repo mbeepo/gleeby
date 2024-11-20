@@ -2,7 +2,7 @@ use std::{cell::{RefCell, RefMut}, rc::Rc};
 
 use crate::{
     codegen::{
-        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
+        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, MemoryVariable, NoRcVariable, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
@@ -15,14 +15,14 @@ use crate::{
 
 use super::{basic_block::BasicBlock, Block, BlockTrait};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoopCondition {
     Native(Condition),
     // Constructed conditions
     /// Decrements `counter` until it reaches `end`, then stops iterating
-    Countdown { counter: Variable, end: u8 },
+    Countdown { counter: NoRcVariable, end: u8 },
     /// Increments `counter` until it reaches `end`, then stops iterating
-    Countup { counter: Variable, end: u8 },
+    Countup { counter: NoRcVariable, end: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,10 +73,10 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
-            LoopCondition::Countdown { ref mut counter, end } => {
+            LoopCondition::Countdown { ref counter, end } => {
                 if end == 0 {
                     let mut buffer = BasicBlock::<Meta>::new(allocator);
-                    if let Err(err) = buffer.dec_var(counter) {
+                    if let Err(err) = buffer.dec_var(&counter.clone().into()) {
                         errs.push(err);
                     }
                     
@@ -96,9 +96,9 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                     todo!()
                 }
             },
-            LoopCondition::Countup { ref mut counter, end } => {
+            LoopCondition::Countup { ref counter, end } => {
                 let mut buffer = BasicBlock::<Meta>::new(allocator);
-                if let Err(err) = buffer.inc_var(counter) {
+                if let Err(err) = buffer.inc_var(&counter.clone().into()) {
                     errs.push(err);
                 }
 
@@ -186,10 +186,6 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<M
 
     fn new_inline_const_r16(&mut self, data: u16) -> Constant {
         self.inner.new_inline_const_r16(data)
-    }
-
-    fn free_var(&mut self, var: Variable) -> Result<(), AssemblerError> {
-        self.inner.free_var(var)
     }
 
     fn evaluate_meta(&mut self) -> Result<(), AssemblerError> {
