@@ -2,11 +2,11 @@ use std::{cell::RefCell, marker::PhantomData, ops::{Index, IndexMut}, rc::Rc};
 
 use crate::{cpu::{GpRegister, RegisterPair, SplitError}, memory::Addr};
 
-use super::{variables::{MemoryVariable, NoRcRegVariable, RegSelector, RegVariable}, Id, Variable};
+use super::{variables::{MemoryVariable, RawRegVariable, RegSelector, RegVariable}, Id, Variable};
 
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct GpRegisters {
-    a: Option<(Id, Option<usize>)>,
+    pub a: Option<(Id, Option<usize>)>,
     b: Option<(Id, Option<usize>)>,
     c: Option<(Id, Option<usize>)>,
     d: Option<(Id, Option<usize>)>,
@@ -22,15 +22,38 @@ pub struct RcGpRegister {
     pub(crate) allocator: Rc<RefCell<GpRegisters>>,
 }
 
+impl RcGpRegister {
+    /// Strips reference count data from the register (trust me bro)
+    /// 
+    /// Calling this will prevent automatic register deallocation
+    /// 
+    /// It's up to you to make sure the register gets deallocated when its time comes
+    pub fn into_raw(self) -> GpRegister {
+        self.allocator.borrow_mut().release_rc(self.inner.into());
+        self.inner
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct RcRegisterPair {
     pub inner: RegisterPair,
     pub(crate) allocator: Rc<RefCell<GpRegisters>>,
 }
 
+impl RcRegisterPair {
+    /// Strips reference count data from the register (trust me bro)
+    /// 
+    /// Calling this will prevent automatic register deallocation
+    /// 
+    /// It's up to you to make sure the register gets deallocated when its time comes
+    pub fn into_raw(self) -> RegisterPair {
+        self.allocator.borrow_mut().release_rc(self.inner.into());
+        self.inner
+    }
+}
+
 impl Clone for RcGpRegister {
     fn clone(&self) -> Self {
-        println!("Clone: {:#?}", &self.inner);
         self.allocator.borrow_mut().increment_rc(self.inner.into());
 
         Self {
@@ -42,14 +65,42 @@ impl Clone for RcGpRegister {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct RcRegVariable {
-    pub inner: NoRcRegVariable,
-    allocator: Rc<RefCell<GpRegisters>>
+    pub inner: RawRegVariable,
+    pub(crate) allocator: Rc<RefCell<GpRegisters>>
+}
+
+impl RcRegVariable {
+    /// Strips reference count data from the register (trust me bro)
+    /// 
+    /// Calling this will prevent automatic register deallocation
+    /// 
+    /// It's up to you to make sure the register gets deallocated when its time comes
+    pub fn into_raw(self) -> RawRegVariable {
+        match self.inner {
+            RawRegVariable::R8 { reg, .. }
+            | RawRegVariable::MemR8 { reg, .. } => self.allocator.borrow_mut().release_rc(reg.into()),
+            RawRegVariable::R16 { reg_pair, .. }
+            | RawRegVariable::MemR16 { reg_pair, .. } => self.allocator.borrow_mut().release_rc(reg_pair.into()),
+            _ => {}
+        }
+        self.inner
+    }
 }
 
 impl Clone for RcRegVariable {
     fn clone(&self) -> Self {
-        println!("Clone: {:#?}", &self.inner);
-        self.allocator.borrow_mut().increment_rc(self.inner.into());
+        let reg: Option<RegSelector> = match self.inner {
+            RawRegVariable::R8 { reg, .. }
+            | RawRegVariable::MemR8 { reg, .. } => Some(reg.into()),
+            RawRegVariable::R16 { reg_pair, .. }
+            | RawRegVariable::MemR16 { reg_pair, .. } => Some(reg_pair.into()),
+            RawRegVariable::UnallocatedR8(..)
+            | RawRegVariable::UnallocatedR16(..) => None,
+        };
+
+        if let Some(reg) = reg {
+            self.allocator.borrow_mut().increment_rc(reg);
+        }
 
         Self {
             inner: self.inner,
@@ -60,14 +111,13 @@ impl Clone for RcRegVariable {
 
 impl Drop for RcGpRegister {
     fn drop(&mut self) {
-        println!("Drop: {:#?}", &self.inner);
+        println!("Drop: {:#?}", self.inner);
         self.allocator.borrow_mut().decrement_rc(self.inner.into());
     }
 }
 
 impl Drop for RcRegisterPair {
     fn drop(&mut self) {
-        println!("Drop: {:#?}", &self.inner);
         self.allocator.borrow_mut().decrement_rc(self.inner.into());
     }
 }
@@ -97,7 +147,7 @@ impl PartialEq<RegisterPair> for RcRegisterPair {
 }
 
 impl RcRegisterPair {
-    pub fn try_split(&self) -> Result<(RcGpRegister, RcGpRegister), SplitError> {
+    pub fn try_split(&self) -> Result<(GpRegister, GpRegister), SplitError> {
         use RegisterPair::*;
 
         let (reg1, reg2) = match self.inner {
@@ -112,22 +162,13 @@ impl RcRegisterPair {
             },
             SP => Err(SplitError::StackPointer)?,
         };
-        
-        let out1 = RcGpRegister {
-            inner: reg1,
-            allocator: self.allocator.clone()
-        };
-        let out2 = RcGpRegister {
-            inner: reg2,
-            allocator: self.allocator.clone()
-        };
 
-        Ok((out1, out2))
+        Ok((reg1, reg2))
     }
 }
 
 impl GpRegisters {
-    fn alloc(&mut self) -> Result<RcGpRegister, ConstAllocError> {
+    fn alloc(&mut self) -> Result<GpRegister, ConstAllocError> {
         let inner = if self.a == None {
             self.a = Some((Id::Unset, Some(1)));
             GpRegister::A
@@ -153,13 +194,10 @@ impl GpRegisters {
             Err(ConstAllocError::OutOfRegisters)?
         };
 
-        Ok(RcGpRegister {
-            inner,
-            allocator: Rc::new(RefCell::new(*self)),
-        })
+        Ok(inner)
     }
 
-    fn alloc_pair(&mut self) -> Result<RcRegisterPair, ConstAllocError> {
+    fn alloc_pair(&mut self) -> Result<RegisterPair, ConstAllocError> {
         let inner = if self.b == None && self.c == None {
             self.b = Some((Id::Unset, Some(1)));
             self.c = Some((Id::Unset, Some(1)));
@@ -175,32 +213,22 @@ impl GpRegisters {
         } else {
             Err(ConstAllocError::OutOfRegisters)?
         };
-
-        Ok(RcRegisterPair {
-            inner,
-            allocator: Rc::new(RefCell::new(*self)),
-        })
+        
+        Ok(inner)
     }
 
-    fn claim(&mut self, reg: GpRegister, id: Id) -> RcGpRegister {
+    fn claim(&mut self, reg: GpRegister, id: Id) -> GpRegister {
         self[reg] = Some((id, Some(1)));
-
-        RcGpRegister {
-            inner: reg,
-            allocator: Rc::new(RefCell::new(*self)),
-        }
+        reg
     }
 
-    fn claim_pair(&mut self, reg_pair: RegisterPair, id: Id) -> RcRegisterPair {
+    fn claim_pair(&mut self, reg_pair: RegisterPair, id: Id) -> RegisterPair {
         if let Ok((reg1, reg2)) = reg_pair.try_split() {
             self[reg1] = Some((id, Some(1)));
             self[reg2] = Some((id, Some(1)));
         }
-
-        RcRegisterPair {
-            inner: reg_pair,
-            allocator: Rc::new(RefCell::new(*self)),
-        }
+        
+        reg_pair
     }
 
     fn free(&mut self, reg: RegSelector) {
@@ -229,10 +257,12 @@ impl GpRegisters {
     }
 
     pub(crate) fn increment_rc(&mut self, reg: RegSelector) {
+        println!("Increment {reg:#?}");
         self.crement_rc(reg, Crementivity::Up);
     }
 
     pub(crate) fn decrement_rc(&mut self, reg: RegSelector) {
+        println!("Decrement {reg:#?}");
         self.crement_rc(reg, Crementivity::Down);
     }
 
@@ -244,9 +274,14 @@ impl GpRegisters {
 
         match reg {
             RegSelector::R8(r8) => {
+                println!("{reg:#?} before crement: {:#?}", self[r8]);
                 self[r8] = self[r8].and_then(|(id, rc)| Some((id, rc.and_then(|rc| Some(rc.checked_add_signed(by).expect("That's a lotta cloning"))))));
                 if self[r8].is_some_and(|(_, rc)| rc == Some(0)) {
                     self.free(r8.into());
+                }
+                println!("{reg:#?} after crement: {:#?}", self[r8]);
+                if r8 == GpRegister::A {
+                    dbg!(self);
                 }
             }
             RegSelector::R16(r16) => {
@@ -302,6 +337,8 @@ impl Index<GpRegister> for GpRegisters {
 impl IndexMut<GpRegister> for GpRegisters {
     fn index_mut(&mut self, index: GpRegister) -> &mut Self::Output {
         use GpRegister::*;
+        println!("{index:#?} accessed mutably");
+
         match index {
             A => &mut self.a,
             B => &mut self.b,
@@ -342,11 +379,11 @@ impl AllocGroup {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ConstAllocator {
     pub constants: AllocGroup,
     pub variables: AllocGroup,
-    pub registers: GpRegisters,
+    pub registers: Rc<RefCell<GpRegisters>>,
 }
 
 impl Default for ConstAllocator {
@@ -387,42 +424,54 @@ impl AllocErrorTrait for ConstAllocError {
 
 impl Allocator<ConstAllocError> for ConstAllocator {
     fn alloc_reg(&mut self) -> Result<RcGpRegister, ConstAllocError> {
-        self.registers.alloc()
+        Ok(RcGpRegister {
+            inner: self.registers.borrow_mut().alloc()?,
+            allocator: self.registers.clone(),
+        })
     }
 
     fn alloc_reg_pair(&mut self) -> Result<RcRegisterPair, ConstAllocError> {
-        self.registers.alloc_pair()
+        Ok(RcRegisterPair {
+            inner: self.registers.borrow_mut().alloc_pair()?,
+            allocator: self.registers.clone(),
+        })
     }
 
     fn release_reg(&mut self, reg: RegSelector) -> &mut Self {
-        self.registers.free(reg);
+        self.registers.borrow_mut().free(reg);
         self
     }
 
     fn claim_reg(&mut self, reg: GpRegister, id: Id) -> RcGpRegister {
-        self.registers.claim(reg, id)
+        RcGpRegister {
+            inner: self.registers.borrow_mut().claim(reg, id),
+            allocator: self.registers.clone(),
+        }
     }
 
     fn claim_reg_pair(&mut self, reg_pair: RegisterPair, id: Id) -> RcRegisterPair {
-        self.registers.claim_pair(reg_pair, id)
+        RcRegisterPair {
+            inner: self.registers.borrow_mut().claim_pair(reg_pair, id),
+            allocator: self.registers.clone(),
+        }
     }
 
     fn get_reg(&self, reg: GpRegister) -> RcGpRegister {
         RcGpRegister {
             inner: reg,
-            allocator: Rc::new(RefCell::new(self.registers))
+            allocator: self.registers.clone()
         }
     }
 
     fn get_reg_pair(&self, reg_pair: RegisterPair) -> RcRegisterPair {
         RcRegisterPair {
             inner: reg_pair,
-            allocator: Rc::new(RefCell::new(self.registers))
+            allocator: self.registers.clone()
         }
     }
 
     fn reg_is_used(&self, reg: RegSelector) -> bool {
-        self.registers.is_claimed(reg)
+        self.registers.borrow_mut().is_claimed(reg)
     }
 
     fn alloc_const(&mut self, len: u16) -> Result<Addr, ConstAllocError> {
@@ -438,29 +487,31 @@ impl Allocator<ConstAllocError> for ConstAllocator {
             Variable::Memory(MemoryVariable { addr, .. }) => { self.variables.dealloc(*addr)?; },
             Variable::Reg(var) => match var {
                 RegVariable::Rc(var) => match var.inner {
-                    NoRcRegVariable::R8 { reg, .. } => { self.registers.decrement_rc(reg.clone().into()); },
-                    NoRcRegVariable::R16 { reg_pair, .. } => { self.registers.decrement_rc(reg_pair.clone().into()); },
-                    NoRcRegVariable::MemR8 { addr, reg, .. } => {
-                        self.registers.decrement_rc(reg.clone().into());
+                    RawRegVariable::R8 { reg, .. } => { self.registers.borrow_mut().decrement_rc(reg.clone().into()); },
+                    RawRegVariable::R16 { reg_pair, .. } => { self.registers.borrow_mut().decrement_rc(reg_pair.clone().into()); },
+                    RawRegVariable::MemR8 { addr, reg, .. } => {
+                        self.registers.borrow_mut().decrement_rc(reg.clone().into());
                         self.variables.dealloc(addr)?;
                     }
-                    NoRcRegVariable::MemR16 { addr, reg_pair, .. } => {
-                        self.registers.decrement_rc(reg_pair.clone().into());
+                    RawRegVariable::MemR16 { addr, reg_pair, .. } => {
+                        self.registers.borrow_mut().decrement_rc(reg_pair.clone().into());
                         self.variables.dealloc(addr)?;
                     }
                     _ => {}
                 },
-                RegVariable::NoRc(var) => match var {
-                    &NoRcRegVariable::R8 { reg, .. } => { self.registers.free(reg.into()); }
-                    &NoRcRegVariable::R16 { reg_pair, .. } => { self.registers.free(reg_pair.into()); } 
-                    &NoRcRegVariable::MemR8 { addr, reg, .. } => {
-                        self.registers.free(reg.into());
-                        self.variables.dealloc(addr);
+                RegVariable::Raw(var) => match *var {
+                    RawRegVariable::R8 { reg, .. } => { self.registers.borrow_mut().free(reg.into()); }
+                    RawRegVariable::R16 { reg_pair, .. } => { self.registers.borrow_mut().free(reg_pair.into()); } 
+                    RawRegVariable::MemR8 { addr, reg, .. } => {
+                        self.registers.borrow_mut().free(reg.into());
+                        self.variables.dealloc(addr)?;
                     }
-                    &NoRcRegVariable::MemR16 { addr, reg_pair, .. } => {
-                        self.registers.free(reg_pair.into());
-                        self.variables.dealloc(addr);
+                    RawRegVariable::MemR16 { addr, reg_pair, .. } => {
+                        self.registers.borrow_mut().free(reg_pair.into());
+                        self.variables.dealloc(addr)?;
                     }
+                    RawRegVariable::UnallocatedR8(_)
+                    | RawRegVariable::UnallocatedR16(_) => {}
                 }
             }
             _ => {}
@@ -487,7 +538,6 @@ impl<AllocError> RegKind<AllocError>
     }
 }
 
-
 pub trait Allocator<AllocError>: std::fmt::Debug
         where AllocError: Clone + std::fmt::Debug + AllocErrorTrait {
     fn alloc_reg(&mut self) -> Result<RcGpRegister, AllocError>;
@@ -497,9 +547,9 @@ pub trait Allocator<AllocError>: std::fmt::Debug
     fn claim_reg(&mut self, reg: GpRegister, id: Id) -> RcGpRegister;
     /// Claims a specific register pair for the given ID
     fn claim_reg_pair(&mut self, reg: RegisterPair, id: Id) -> RcRegisterPair;
-    /// Gets a specific register without preventing it from being allocated
+    /// Gets a specific register without changing its allocation status
     fn get_reg(&self, reg: GpRegister) -> RcGpRegister;
-    /// Gets a specific register pair without preventing it from being allocated
+    /// Gets a specific register pair without changing its allocation status
     fn get_reg_pair(&self, reg: RegisterPair) -> RcRegisterPair;
     /// Returns true if the selected register is unallocated
     fn reg_is_used(&self, reg: RegSelector) -> bool;

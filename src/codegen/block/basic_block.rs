@@ -1,11 +1,11 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
 use crate::codegen::assembler::Context;
 use crate::codegen::meta_instr::MetaInstructionTrait;
-use crate::codegen::variables::{Constant, RcRegVariable, NoRcRegVariable, StoredConstant, Variabler};
+use crate::codegen::variables::{Constant, StoredConstant, Variabler};
 use crate::codegen::{Assembler, AssemblerError, Id, LoopCondition, MacroAssembler};
 use crate::codegen::{Block, LoopBlock};
 use crate::codegen::{IdInner, Variable};
@@ -120,10 +120,6 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
 
     fn allocator(&self) -> Rc<RefCell<ConstAllocator>> {
         self.allocator.clone()
-    }
-    
-    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
-        self.allocator.borrow_mut()
     }
 }
 

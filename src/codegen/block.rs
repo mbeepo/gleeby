@@ -80,7 +80,6 @@ impl<Meta> TryFrom<Block<Meta>> for Vec<u8>
             Block::Basic(block) => block.try_into(),
             Block::Loop(block) => block.try_into(),
             Block::Raw(block) => Ok(block.into()),
-            _ => unimplemented!()
         }
     }
 }
@@ -92,7 +91,6 @@ impl<Meta> Assembler<Meta> for Block<Meta>
             Self::Basic(block) => block.push_instruction(instruction),
             Self::Loop(block) => block.push_instruction(instruction),
             Self::Raw(block) => block.push_instruction(instruction),
-            _ => unimplemented!()
         }
     }
 
@@ -101,7 +99,6 @@ impl<Meta> Assembler<Meta> for Block<Meta>
             Self::Basic(block) => block.push_buf(buf),
             Self::Loop(block) => block.push_buf(buf),
             Self::Raw(block) => block.push_buf(buf),
-            _ => unimplemented!()
         }
     }
 
@@ -110,7 +107,6 @@ impl<Meta> Assembler<Meta> for Block<Meta>
             Self::Basic(block) => block.len(),
             Self::Loop(block) => block.len(),
             Self::Raw(block) => block.len(),
-            _ => unimplemented!()
         }
     }
 }

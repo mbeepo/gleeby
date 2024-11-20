@@ -1,6 +1,6 @@
-use crate::{codegen::{allocator::RegKind, block::BlockTrait, variables::{RegSelector, RcRegVariable}}, cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx, Tilemap}, TiledataSelector, TilemapSelector}};
+use crate::{codegen::{block::BlockTrait, variables::RegSelector}, cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx, Tilemap}, TiledataSelector, TilemapSelector}};
 
-use super::{allocator::{AllocErrorTrait, Allocator, ConstAllocError, RcGpRegister, RcRegisterPair}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, NoRcVariable, NoRcRegVariable, StoredConstant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
+use super::{allocator::{AllocErrorTrait, Allocator, ConstAllocError}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, RawRegVariable, RawVariable, StoredConstant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
 pub trait Assembler<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
@@ -218,29 +218,31 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
         let colors: Vec<u8> = colors.iter().flat_map(|color| color.0.to_be_bytes()).collect();
         let addr = self.new_stored_const(&colors)?;
 
-        let reg_hl = self.allocator_mut().claim_reg_pair(RegisterPair::HL, Id::Unset).no_rc();
-        let reg_a = self.allocator_mut().claim_reg(GpRegister::A, Id::Unset);
+        let reg_hl = self.allocator().borrow_mut().claim_reg_pair(RegisterPair::HL, Id::Unset);
+        let reg_a = self.allocator().borrow_mut().claim_reg(GpRegister::A, Id::Unset);
 
         let block = self.basic_block().open(|block| {
-            block.ld_r16_imm(reg_hl, addr.addr);
+            block.ld_r16_imm(reg_hl.inner, addr.addr);
             block.ld_r8_imm(reg_a.inner, PaletteSelector::new(true, palette).into());
             block.ldh_from_a(IoReg::Bcps.into());
         });
         
-        let counter = block.init_var8(colors.len() as u8)?.no_rc();
-        block.loop_block(LoopCondition::Countdown { counter, end: 0 }).open(|block| {
+        let counter = block.init_var8(colors.len() as u8)?;
+        block.loop_block(LoopCondition::Countdown { counter: counter.clone().into(), end: 0 }).open(|block| {
             block.ld_a_from_r16(IndirectPair::HLInc).ldh_from_a(IoReg::Bcpd.into());
         });
+
+        let counter: Variable = counter.into();
 
         Ok(())
     }
 
     fn copy(&mut self, src: Addr, dest: Addr, len: u16) -> Result<(), Error> {
-        let reg_hl = self.allocator_mut().claim_reg_pair(RegisterPair::HL, Id::Unset).no_rc();
-        let reg_a = self.allocator_mut().claim_reg(GpRegister::A, Id::Unset);
-        self.ld_r16_imm(reg_hl, dest);
+        let reg_hl = self.allocator().borrow_mut().claim_reg_pair(RegisterPair::HL, Id::Unset);
+        let reg_a = self.allocator().borrow_mut().claim_reg(GpRegister::A, Id::Unset);
+        self.ld_r16_imm(reg_hl.inner, dest);
         
-        let hl_var: NoRcVariable = NoRcRegVariable::from(reg_hl).into();
+        let hl_var: RawVariable = RawRegVariable::from(reg_hl.inner).into();
 
         let counter = if let Ok(len) = len.try_into() {
             self.init_var8::<u8>(len)?
@@ -255,9 +257,7 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
             .ld_a_to_r16(IndirectPair::HLInc)
             .inc_var(&mut data_pointer)?;
 
-        self.allocator_mut().release_reg(RegSelector::R16(RegisterPair::HL));
-
-        // self.allocator_mut().release_reg(RegSelector::R16(RegisterPair::HL))
+        // self.allocator().borrow_mut().release_reg(RegSelector::R16(RegisterPair::HL))
         //     .release_reg(RegSelector::R8(GpRegister::A))
         //     .dealloc_var(&counter)?
         //     .dealloc_var(&data_pointer)?;
@@ -266,7 +266,6 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
     }
 
     fn write_tile_data(&mut self, area: TiledataSelector, idx: TileIdx, data: &Tile) -> Result<(), Error> {
-        dbg!(self.allocator().borrow());
         let src = self.new_stored_const(&data.as_bytes())?;
         let dest = area.from_idx(idx);
 
@@ -291,19 +290,20 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
     /// Disables the LCD immediately, granting full access to PPU related memory
     /// 
     /// This should only be called during VBlank: [https://gbdev.io/pandocs/LCDC.html#lcdc7--lcd-enable]
-    fn disable_lcd_now(&mut self) {
-        let reg_a = self.allocator_mut().claim_reg(GpRegister::A, Id::Unset);
+    fn disable_lcd_now(&mut self) -> std::rc::Rc<std::cell::RefCell<Self::Alloc>> {
+        let reg_a = self.allocator().borrow_mut().claim_reg(GpRegister::A, Id::Unset);
         
         self.basic_block()
             .ldh_to_a(IoReg::Lcdc.into())
             .res(reg_a.inner, Bit::_7)
             .ldh_from_a(IoReg::Lcdc.into());
 
-        // self.allocator_mut().release_reg(RegSelector::R8(GpRegister::A));
+        drop(reg_a);
+        self.allocator().clone()
     }
 
     fn enable_lcd_now(&mut self) {
-        let reg_a = self.allocator_mut().claim_reg(GpRegister::A, Id::Unset);
+        let reg_a = self.allocator().borrow_mut().claim_reg(GpRegister::A, Id::Unset);
         
         self.basic_block().open(|block| {
             block.ldh_to_a(IoReg::Lcdc.into());
@@ -311,7 +311,7 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
             block.ldh_from_a(IoReg::Lcdc.into());
         });
 
-        // self.allocator_mut().release_reg(RegSelector::R8(GpRegister::A));
+        // self.allocator().borrow_mut().release_reg(RegSelector::R8(GpRegister::A));
     }
     
     fn init_var8<T>(&mut self, value: T) -> Result<Variable, Error>

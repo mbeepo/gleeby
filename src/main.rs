@@ -17,12 +17,16 @@ fn main() {
         [0, 0, 0, 0, 0, 0, 0, 0]
     ]).expect("Someone did a silly >:#");
 
-    sys.disable_lcd_now();
-    // sys.set_palette(CgbPalette::_0, colors).unwrap();
-    // sys.write_tile_data(TiledataSelector::Tiledata8000, 1, &smiley).unwrap();
-    dbg!(sys.allocator().borrow().registers);
+    dbg!(&sys.allocator().borrow().registers);
+    let regs = sys.disable_lcd_now();
+    assert_eq!(sys.allocator().borrow().registers.clone(), regs.borrow().registers.clone());
+    dbg!(&sys.allocator().borrow().registers);
+    sys.set_palette(CgbPalette::_0, colors).unwrap();
+    dbg!(&sys.allocator().borrow().registers);
+    sys.write_tile_data(TiledataSelector::Tiledata8000, 1, &smiley).unwrap();
+    dbg!(&sys.allocator().borrow().registers);
     sys.write_tile_data(TiledataSelector::Tiledata8000, 2, &flat).unwrap();
-    dbg!(sys.allocator().borrow().registers);
+    dbg!(&sys.allocator().borrow().registers);
 
     let setter = |x, y| {
         if (x > 8 && x < 12 && y > 8 && y < 12)
@@ -43,9 +47,9 @@ fn main() {
         }
     }
 
-    dbg!(sys.allocator().borrow().registers);
+    dbg!(&sys.allocator().borrow().registers);
     sys.set_tilemap(TilemapSelector::Tilemap9800, Tilemap::from(tilemap)).unwrap();
-    dbg!(sys.allocator().borrow().registers);
+    dbg!(&sys.allocator().borrow().registers);
 
 
     sys.enable_lcd_now();

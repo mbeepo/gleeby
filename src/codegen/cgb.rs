@@ -1,4 +1,4 @@
-use std::cell::{RefCell, RefMut};
+use std::cell::RefCell;
 use std::io::{Seek, Write};
 use std::rc::Rc;
 use std::{fs::File, io};
@@ -6,7 +6,7 @@ use std::{fs::File, io};
 use super::allocator::{ConstAllocError, ConstAllocator};
 use super::assembler::Context;
 use super::meta_instr::MetaInstruction;
-use super::variables::{Constant, IdInner, StoredConstant, Variable, Variabler};
+use super::variables::{Constant, IdInner, StoredConstant, Variabler};
 use super::{Assembler, AssemblerError, BasicBlock, LoopBlock, LoopCondition, MacroAssembler};
 use crate::cpu::instructions::Instruction;
 use crate::cpu::Condition;
@@ -87,10 +87,6 @@ impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
 
     fn new_var(&mut self, len: u16) -> super::Variable {
         self.inner.new_var(len)
-    }
-    
-    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
-        self.inner.allocator_mut()
     }
 
     fn allocator(&self) -> Rc<RefCell<Self::Alloc>> {

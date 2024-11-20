@@ -1,8 +1,22 @@
-use std::{cell::{RefCell, RefMut}, rc::Rc};
+use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     codegen::{
-        allocator::{ConstAllocError, ConstAllocator}, meta_instr::MetaInstructionTrait, variables::{Constant, MemoryVariable, NoRcVariable, StoredConstant, Variabler}, Assembler, AssemblerError, MacroAssembler, Variable
+        allocator::{
+            ConstAllocError,
+            ConstAllocator
+        },
+        meta_instr::MetaInstructionTrait,
+        variables::{
+            Constant,
+            RawVariable,
+            StoredConstant,
+            Variabler
+        },
+        Assembler,
+        AssemblerError,
+        MacroAssembler,
+        Variable
     },
     cpu::{
         instructions::{
@@ -20,9 +34,9 @@ pub enum LoopCondition {
     Native(Condition),
     // Constructed conditions
     /// Decrements `counter` until it reaches `end`, then stops iterating
-    Countdown { counter: NoRcVariable, end: u8 },
+    Countdown { counter: RawVariable, end: u8 },
     /// Increments `counter` until it reaches `end`, then stops iterating
-    Countup { counter: NoRcVariable, end: u8 },
+    Countup { counter: RawVariable, end: u8 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -55,7 +69,7 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     type Error = Vec<AssemblerError>;
 
-    fn try_from(mut value: LoopBlock<Meta>) -> Result<Self, Self::Error> {
+    fn try_from(value: LoopBlock<Meta>) -> Result<Self, Self::Error> {
         let mut errs: Self::Error = Vec::new();
 
         // when jumping backwards the offset must include the Jr itself (2 bytes)
@@ -158,10 +172,6 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
 
     fn allocator(&self) -> Rc<RefCell<ConstAllocator>> {
         self.inner.allocator()
-    }
-
-    fn allocator_mut(&mut self) -> RefMut<Self::Alloc> {
-        self.inner.allocator_mut()
     }
 }
 

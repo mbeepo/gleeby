@@ -1,6 +1,4 @@
-use std::{io::Read, ops::Index};
-
-use crate::codegen::AssemblerError;
+use std::ops::Index;
 
 use super::{ConversionError, palettes::PaletteColor};
 
