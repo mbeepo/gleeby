@@ -67,7 +67,10 @@ fn main() {
     }
 
     dbg!(&sys.allocator().borrow().registers);
-    sys.set_tilemap(TilemapSelector::Tilemap9800, Tilemap::from(tilemap)).unwrap();
+    // sys.set_tilemap(TilemapSelector::Tilemap9800, Tilemap::from(tilemap)).unwrap();
+    sys.set_tile(TilemapSelector::Tilemap9800, 0, 1).unwrap();
+    sys.set_tile(TilemapSelector::Tilemap9800, 8, 1).unwrap();
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
 
 

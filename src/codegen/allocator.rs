@@ -160,6 +160,18 @@ impl PartialEq<RegisterPair> for RcRegisterPair {
     }
 }
 
+impl From<&RcGpRegister> for GpRegister {
+    fn from(value: &RcGpRegister) -> Self {
+        value.inner
+    }
+}
+
+impl From<&RcRegisterPair> for RegisterPair {
+    fn from(value: &RcRegisterPair) -> Self {
+        value.inner
+    }
+}
+
 impl RcRegisterPair {
     pub fn try_split(&self) -> Result<(GpRegister, GpRegister), SplitError> {
         use RegisterPair::*;
@@ -463,20 +475,6 @@ impl Allocator<ConstAllocError> for ConstAllocator {
         }
     }
 
-    fn get_reg(&self, reg: GpRegister) -> RcGpRegister {
-        RcGpRegister {
-            inner: reg,
-            allocator: self.registers.clone()
-        }
-    }
-
-    fn get_reg_pair(&self, reg_pair: RegisterPair) -> RcRegisterPair {
-        RcRegisterPair {
-            inner: reg_pair,
-            allocator: self.registers.clone()
-        }
-    }
-
     fn reg_is_used(&self, reg: RegSelector) -> bool {
         self.registers.borrow_mut().is_claimed(reg)
     }
@@ -554,10 +552,6 @@ pub trait Allocator<AllocError>: std::fmt::Debug
     fn claim_reg(&mut self, reg: GpRegister, id: Id) -> RcGpRegister;
     /// Claims a specific register pair for the given ID
     fn claim_reg_pair(&mut self, reg: RegisterPair, id: Id) -> RcRegisterPair;
-    /// Gets a specific register without changing its allocation status
-    fn get_reg(&self, reg: GpRegister) -> RcGpRegister;
-    /// Gets a specific register pair without changing its allocation status
-    fn get_reg_pair(&self, reg: RegisterPair) -> RcRegisterPair;
     /// Returns true if the selected register is unallocated
     fn reg_is_used(&self, reg: RegSelector) -> bool;
     fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;

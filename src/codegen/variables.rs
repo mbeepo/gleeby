@@ -2,7 +2,7 @@ use std::{cell::RefCell, fmt::Display, hash::Hash, rc::Rc};
 
 use crate::{codegen::allocator::RegKind, cpu::{CpuFlag, GpRegister, RegisterPair, SplitError, StackPair}, memory::Addr};
 
-use super::{allocator::{AllocErrorTrait, Allocator, RcRegVariable}, assembler::ErrorTrait, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler};
+use super::{allocator::{AllocErrorTrait, Allocator, RcGpRegister, RcRegVariable, RcRegisterPair}, assembler::ErrorTrait, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler};
 
 pub(crate) type IdInner = usize;
 
@@ -189,12 +189,11 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     fn allocator(&self) -> Rc<RefCell<Self::Alloc>>;
 
     fn load_var(&mut self, var: &Variable) -> Result<RegVariable, Error> {
-        let allocator = self.allocator();
         let out: RegVariable = match var {
             Variable::Memory(var) => {
                 match RegKind::<AllocError>::try_from_len(var.len)? {
                     RegKind::GpRegister => {
-                        if let Ok(reg) = allocator.borrow_mut().alloc_reg() {
+                        if let Ok(reg) = self.alloc_reg() {
                             if reg.inner != GpRegister::A {
                                 // will have to change which register the variable refers to that previously referred to `a`
                                 self.ld_r8_from_r8(reg.inner, GpRegister::A);
@@ -214,10 +213,10 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                         }
                     }
                     RegKind::RegisterPair => {
-                        let allocated = allocator.borrow_mut().alloc_reg_pair();
+                        let allocated = self.alloc_reg_pair();
                         if let Ok(reg_pair) = allocated {
                             let (reg1, reg2): (GpRegister, GpRegister) = reg_pair.try_split()?;
-                            let tmp = allocator.borrow_mut().alloc_reg().map(|i| i.into_raw());
+                            let tmp = self.alloc_reg().map(|i| i.into_raw());
                             let reg_a = GpRegister::A;
 
                             // swap the current value of `a` into a temporary register
@@ -229,7 +228,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                                 Some(tmp)
                             } else {
                                 // or push to stack if no registers are free
-                                self.push(&StackPair::AF);
+                                self.push(StackPair::AF);
                                 None
                             };
 
@@ -243,9 +242,9 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                             // swap the old value back into `a`
                             if let Some(tmp_reg) = swapped_with {
                                 self.ld_r8_from_r8(reg_a, tmp_reg);
-                                allocator.borrow_mut().release_reg(tmp_reg.into());
+                                self.release_reg(tmp_reg.into());
                             } else {
-                                self.pop(&StackPair::AF);
+                                self.pop(StackPair::AF);
                             }
 
                             RcRegVariable { 
@@ -257,7 +256,6 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                                 allocator: reg_pair.allocator.clone()
                             }.into()
                         } else {
-                            dbg!(allocator.borrow());
                             todo!("Swap variable to memory")
                         }
                     }
@@ -280,47 +278,272 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         Ok(out)
     }
 
-    fn store_var(&mut self, var: Variable) -> Result<MemoryVariable, Error> {
-        let allocator = self.allocator();
+    fn ld_var_to_ind(&mut self, var: &Variable, dest: Addr) -> Result<(), Error> {
         let out = match var {
-            Variable::Memory(var) => var,
             Variable::Reg(RegVariable::Rc(RcRegVariable { inner: var, .. }))
             | Variable::Reg(RegVariable::Raw(var)) => {
-                match var {
-                    RawRegVariable::R8 { reg, id } => {
-                        let addr = allocator.borrow_mut().alloc_var(1)?;
-                        let tmp = allocator.borrow_mut().alloc_reg();
+                match *var {
+                    RawRegVariable::R8 { reg: src, .. }
+                    | RawRegVariable::MemR8 { reg: src, ..} => {
+                        if src == GpRegister::A {
+                            if dest >= 0xff00 {
+                                self.ldh_from_a((dest & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(dest);
+                            }
+
+                            return Ok(());
+                        }
+
+                        let tmp = self.alloc_reg();
 
                         if let Ok(tmp) = tmp {
                             if tmp == GpRegister::A {
-                                todo!()
+                                self.ld_r8_from_r8(GpRegister::A, src);
+
+                                if dest >= 0xff00 {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
                             } else {
-                                todo!()
+                                self.ld_r8_from_r8(tmp.inner, GpRegister::A);
+                                self.ld_r8_from_r8(GpRegister::A, src);
+
+                                if dest >= 0xff00 {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
+
+                                self.ld_r8_from_r8(GpRegister::A, tmp.inner);
                             }
                         } else {
-                            // fall back to `self.ld_a_to_r16`
-                            todo!()
+                            self.push(StackPair::AF);
+                            self.ld_r8_from_r8(GpRegister::A, src);
+                            
+                            if dest >= 0xff00 {
+                                self.ldh_from_a((dest & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(dest);
+                            }
+
+                            self.pop(StackPair::AF);
                         }
                     }
-                    RawRegVariable::R16 { reg_pair: _, id: _ } => {
-                        todo!()
+                    RawRegVariable::R16 { reg_pair: src, .. }
+                    | RawRegVariable::MemR16 { reg_pair: src, .. } => {
+                        let tmp = self.alloc_reg();
+                        let (src1, src2) = src.try_split()?;
+
+                        if let Ok(tmp) = tmp {
+                            if tmp == GpRegister::A {
+                                self.ld_r8_from_r8(GpRegister::A, src1);
+                                
+                                if dest >= 0xff00 && dest < 0xffff {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
+
+                                self.ld_r8_from_r8(GpRegister::A, src2);
+                                
+                                if dest >= 0xff00 && dest < 0xffff {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
+                            } else {
+                                self.ld_r8_from_r8(tmp.inner, GpRegister::A);
+                                self.ld_r8_from_r8(GpRegister::A, src1);
+
+                                if dest >= 0xff00 && dest < 0xffff {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
+
+                                self.ld_r8_from_r8(GpRegister::A, src2);
+
+                                if dest >= 0xff00 && dest < 0xffff {
+                                    self.ldh_from_a((dest & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(dest);
+                                }
+
+                                self.ld_r8_from_r8(GpRegister::A, tmp.inner);
+                            }
+                        } else {
+                            self.push(StackPair::AF);
+                            self.ld_r8_from_r8(GpRegister::A, src1);
+
+                            if dest >= 0xff00 && dest < 0xffff {
+                                self.ldh_from_a((dest & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(dest);
+                            }
+                                
+                            self.ld_r8_from_r8(GpRegister::A, src2);
+
+                            if dest >= 0xff00 && dest < 0xffff {
+                                self.ldh_from_a(((dest + 1) & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(dest + 1);
+                            }
+                            
+                            self.pop(StackPair::AF);
+                        }
                     }
-                    RawRegVariable::MemR8 { addr, reg: _, id } => MemoryVariable { addr, len: 1, id },
-                    RawRegVariable::MemR16 { addr, reg_pair: _, id } => MemoryVariable { addr, len: 2, id },
                     RawRegVariable::UnallocatedR8(_)
                     | RawRegVariable::UnallocatedR16(_) => {
                         unimplemented!()
                     }
                 }
             }
+            Variable::Memory(_) => {
+                let var: Variable = self.load_var(var)?.into();
+                self.ld_var_to_ind(&var, dest)?;
+            },
             Variable::Unallocated { .. } => unimplemented!()
         };
 
         Ok(out)
     }
 
+    fn ld_var_from_ind(&mut self, var: &Variable, src: Addr) -> Result<(), Error> {
+        match var {
+            Variable::Reg(RegVariable::Rc(RcRegVariable { inner: var, .. }))
+            | Variable::Reg(RegVariable::Raw(var)) => {
+                match *var {
+                    RawRegVariable::R8 { reg: dest, .. }
+                    | RawRegVariable::MemR8 { reg: dest, ..} => {
+                        if dest == GpRegister::A {
+                            if src >= 0xff00 {
+                                self.ldh_to_a((src & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(src);
+                            }
+                            
+                            return Ok(());
+                        }
+
+                        let tmp = self.alloc_reg();
+
+                        if let Ok(tmp) = tmp {
+                            if tmp == GpRegister::A {
+                                if src >= 0xff00 {
+                                    self.ldh_to_a((src & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src);
+                                }
+                                
+                                self.ld_r8_from_r8(dest, GpRegister::A);
+                            } else {
+                                self.ld_r8_from_r8(tmp.inner, GpRegister::A);
+
+                                if src >= 0xff00 {
+                                    self.ldh_to_a((src & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src);
+                                }
+                                
+                                self.ld_r8_from_r8(dest, GpRegister::A);
+                                self.ld_r8_from_r8(GpRegister::A, tmp.inner);
+                            }
+                        } else {
+                            self.push(StackPair::AF);
+
+                            if src >= 0xff00 {
+                                self.ldh_to_a((src & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(src);
+                            }
+                            
+                            self.ld_r8_from_r8(dest, GpRegister::A);
+                            self.pop(StackPair::AF);
+                        }
+                    }
+                    RawRegVariable::R16 { reg_pair: dest, .. }
+                    | RawRegVariable::MemR16 { reg_pair: dest, .. } => {
+                        let tmp = self.alloc_reg();
+                        let (dest1, dest2) = dest.try_split()?;
+
+                        if let Ok(tmp) = tmp {
+                            if tmp == GpRegister::A {
+                                if src >= 0xff00 && src < 0xffff {
+                                    self.ldh_to_a((src & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src);
+                                }
+                                
+                                self.ld_r8_from_r8(dest1, GpRegister::A);
+
+                                if src >= 0xff00 && src < 0xffff {
+                                    self.ldh_to_a(((src + 1) & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src + 1);
+                                }
+                                
+                                self.ld_r8_from_r8(dest2, GpRegister::A);
+                            } else {
+                                self.ld_r8_from_r8(tmp.inner, GpRegister::A);
+
+                                if src >= 0xff00 && src < 0xffff {
+                                    self.ldh_to_a((src & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src);
+                                }
+                                
+                                self.ld_r8_from_r8(dest1, GpRegister::A);
+
+                                if src >= 0xff00 && src < 0xffff {
+                                    self.ldh_to_a(((src + 1) & 0x00ff) as u8);
+                                } else {
+                                    self.ld_a_to_ind(src + 1);
+                                }
+                                
+                                self.ld_r8_from_r8(dest2, GpRegister::A);
+                                self.ld_r8_from_r8(GpRegister::A, tmp.inner);
+                            }
+                        } else {
+                            self.push(StackPair::AF);
+
+                            if src >= 0xff00 && src < 0xffff {
+                                self.ldh_to_a((src & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(src);
+                            }
+                            
+                            self.ld_r8_from_r8(dest1, GpRegister::A);
+
+                            if src >= 0xff00 && src < 0xffff {
+                                self.ldh_to_a(((src + 1) & 0x00ff) as u8);
+                            } else {
+                                self.ld_a_to_ind(src + 1);
+                            }
+                            
+                            self.ld_r8_from_r8(dest2, GpRegister::A);
+                            self.pop(StackPair::AF);
+                        }
+                    }
+                    RawRegVariable::UnallocatedR8(_)
+                    | RawRegVariable::UnallocatedR16(_) => {
+                        unimplemented!()
+                    }
+                }
+            },
+            Variable::Memory(_) => {
+                // This *should* only recurse once, since `load_var` returns a `RegVariable` and that is handled directly
+                let var: Variable = self.load_var(var)?.into();
+                self.ld_var_from_ind(&var, src)?;
+            },
+            Variable::Unallocated { .. } => unimplemented!()
+        }
+
+        Ok(())
+    }
+
     fn set_var(&mut self, var: &mut Variable, value: &mut VarOrConst) -> Result<&mut Self, Error> {
-        let allocator = self.allocator();
         let mut new_var: Option<Variable> = None;
         let dest: RcRegVariable = match var {
             Variable::Reg(RegVariable::Rc(var)) => var.clone(),
@@ -328,7 +551,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 RawRegVariable::R8 { reg, id }
                 | RawRegVariable::MemR8 { reg, id, .. } => {
                     // get the allocator bwehehe
-                    let reg = allocator.borrow_mut().claim_reg(*reg, *id);
+                    let reg = self.claim_reg(*reg, *id);
                     RcRegVariable {
                         inner: *raw,
                         allocator: reg.allocator.clone()
@@ -336,14 +559,14 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 },
                 RawRegVariable::R16 { reg_pair, id }
                 | RawRegVariable::MemR16 { reg_pair, id, .. } => {
-                    let reg_pair = allocator.borrow_mut().claim_reg_pair(*reg_pair, *id);
+                    let reg_pair = self.claim_reg_pair(*reg_pair, *id);
                     RcRegVariable {
                         inner: *raw,
                         allocator: reg_pair.allocator.clone()
                     }
                 },
                 RawRegVariable::UnallocatedR8(id) => {
-                    let reg = allocator.borrow_mut().alloc_reg()?;
+                    let reg = self.alloc_reg()?;
                     new_var = Some(RawRegVariable::R8 { reg: reg.inner, id: *id }.into());
                     RcRegVariable {
                         inner: RawRegVariable::R8 { reg: reg.inner, id: *id },
@@ -351,7 +574,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                     }
                 },
                 RawRegVariable::UnallocatedR16(id) => {
-                    let reg = allocator.borrow_mut().alloc_reg_pair()?;
+                    let reg = self.alloc_reg_pair()?;
                     new_var = Some(RawRegVariable::R16 { reg_pair: reg.inner, id: *id }.into());
                     RcRegVariable {
                         inner: RawRegVariable::R16 { reg_pair: reg.inner, id: *id },
@@ -361,14 +584,14 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
             }
             Variable::Memory(var) => match RegKind::<AllocError>::try_from_len(var.len) {
                 Ok(RegKind::GpRegister) => {
-                    let reg = allocator.borrow_mut().alloc_reg()?;
+                    let reg = self.alloc_reg()?;
                     RcRegVariable {
                         inner: RawRegVariable::MemR8 { reg: reg.inner, addr: var.addr, id: var.id },
                         allocator: reg.allocator.clone(),
                     }
                 }
                 Ok(RegKind::RegisterPair) => {
-                    let reg = allocator.borrow_mut().alloc_reg_pair()?;
+                    let reg = self.alloc_reg_pair()?;
                     RcRegVariable {
                         inner: RawRegVariable::MemR16 {reg_pair: reg.inner, addr: var.addr, id: var.id },
                         allocator: reg.allocator.clone(),
@@ -378,7 +601,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
             },
             Variable::Unallocated { len, id } => match RegKind::<AllocError>::try_from_len(*len) {
                 Ok(RegKind::GpRegister) => {
-                    let reg = allocator.borrow_mut().alloc_reg()?;
+                    let reg = self.alloc_reg()?;
                     let out = RcRegVariable {
                         inner: RawRegVariable::R8 { reg: reg.inner, id: *id },
                         allocator: reg.allocator.clone(),
@@ -387,7 +610,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                     out
                 },
                 Ok(RegKind::RegisterPair) => {
-                    let reg = allocator.borrow_mut().alloc_reg_pair()?;
+                    let reg = self.alloc_reg_pair()?;
                     let out = RcRegVariable {
                         inner: RawRegVariable::R16 { reg_pair: reg.inner, id: *id },
                         allocator: reg.allocator.clone(),
@@ -419,14 +642,14 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                                 self.ld_r8_from_r8(dest2, src2);
                             },
                         (RawRegVariable::UnallocatedR8(id), _) => {
-                            let addr = allocator.borrow_mut().alloc_var(1)?;
+                            let addr = self.alloc_var(1)?;
                             let mut reg = Variable::Memory(MemoryVariable { addr, len: 1, id });
     
                             self.set_var(&mut reg, value)?;
                             *var = reg;
                         }
                         (RawRegVariable::UnallocatedR16(id), _) => {
-                            let addr = allocator.borrow_mut().alloc_var(2)?;
+                            let addr = self.alloc_var(2)?;
                             let mut reg = Variable::Memory(MemoryVariable { addr, len: 2, id });
     
                             self.set_var(&mut reg, value)?;
@@ -450,14 +673,14 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                     (RawRegVariable::R16 { reg_pair: dest, .. } | RawRegVariable::MemR16 { reg_pair: dest, .. },
                         Constant::Addr(constant)) => { self.ld_r16_imm(dest, constant.addr); },
                     (RawRegVariable::UnallocatedR8(id), _) => {
-                        let addr = allocator.borrow_mut().alloc_var(1)?;
+                        let addr = self.alloc_var(1)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 1, id });
 
                         self.set_var(&mut reg, value)?;
                         *var = reg;
                     }
                     (RawRegVariable::UnallocatedR16(id), _) => {
-                        let addr = allocator.borrow_mut().alloc_var(2)?;
+                        let addr = self.alloc_var(2)?;
                         let mut reg = Variable::Memory(MemoryVariable { addr, len: 2, id });
 
                         self.set_var(&mut reg, value)?;
@@ -529,8 +752,7 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
                 },
                 RawRegVariable::UnallocatedR8(_)
                 | RawRegVariable::UnallocatedR16(_) => { 
-                    let reg_a = self.allocator().borrow().get_reg(GpRegister::A);
-                    let raw_a: Variable =  RawRegVariable::from(reg_a.inner).into();
+                    let raw_a: Variable =  RawRegVariable::from(GpRegister::A).into();
                     self.meta(Meta::var_from_ind(raw_a.into(), var.into()));
                 },
             }
@@ -560,5 +782,45 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         }
 
         Ok(self)
+    }
+    
+    fn alloc_reg(&self) -> Result<RcGpRegister, AllocError> {
+        self.allocator().borrow_mut().alloc_reg()
+    }
+
+    fn alloc_reg_pair(&self) -> Result<RcRegisterPair, AllocError> {
+        self.allocator().borrow_mut().alloc_reg_pair()
+    }
+
+    fn release_reg(&self, reg: RegSelector) {
+        self.allocator().borrow_mut().release_reg(reg);
+    }
+
+    /// Claims a specific register for the given ID
+    fn claim_reg(&self, reg: GpRegister, id: Id) -> RcGpRegister {
+        self.allocator().borrow_mut().claim_reg(reg, id)
+    }
+
+    /// Claims a specific register pair for the given ID
+    fn claim_reg_pair(&self, reg: RegisterPair, id: Id) -> RcRegisterPair {
+        self.allocator().borrow_mut().claim_reg_pair(reg, id)
+    }
+
+    /// Returns true if the selected register is unallocated
+    fn reg_is_used(&self, reg: RegSelector) -> bool {
+        self.allocator().borrow().reg_is_used(reg)
+    }
+
+    fn alloc_const(&self, len: u16) -> Result<Addr, AllocError> {
+        self.allocator().borrow_mut().alloc_const(len)
+    }
+
+    fn alloc_var(&self, len: u16) -> Result<Addr, AllocError> {
+        self.allocator().borrow_mut().alloc_var(len)
+    }
+
+    fn dealloc_var(&self, var: Variable) -> Result<(), AllocError> {
+        self.allocator().borrow_mut().dealloc_var(var)?;
+        Ok(())
     }
 }

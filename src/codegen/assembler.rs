@@ -1,8 +1,6 @@
-use std::{cell::RefMut, rc::Rc};
-
 use crate::{codegen::block::BlockTrait, cpu::{instructions::{Bit, Instruction, PrefixInstruction}, Condition, GpRegister, IndirectPair, RegisterPair, SplitError, StackPair}, memory::{Addr, IoReg}, ppu::{objects::{Sprite, SpriteIdx}, palettes::{CgbPalette, Color, PaletteSelector}, tiles::{Tile, TileIdx, Tilemap}, TiledataSelector, TilemapSelector}};
 
-use super::{allocator::{AllocErrorTrait, Allocator, ConstAllocError, RcGpRegister, RcRegisterPair}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, RawRegVariable, RawVariable, RegSelector, StoredConstant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
+use super::{allocator::{AllocErrorTrait, ConstAllocError}, block::basic_block::BasicBlock, meta_instr::{MetaInstructionTrait, VarOrConst}, variables::{Constant, RawRegVariable, RawVariable, StoredConstant, Variabler}, AssemblerError, Id, IdInner, LoopBlock, LoopCondition, Variable};
 
 pub trait Assembler<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
@@ -14,8 +12,9 @@ pub trait Assembler<Meta>
     /// `ld rr, n16`
     /// 
     /// Load the little endian immediate `imm` into `reg`
-    fn ld_r16_imm(&mut self, reg_pair: RegisterPair, imm: u16) -> &mut Self {
-        self.push_instruction(Instruction::LdR16Imm(reg_pair, imm));
+    fn ld_r16_imm<T>(&mut self, reg_pair: T, imm: u16) -> &mut Self
+            where T: Into<RegisterPair> {
+        self.push_instruction(Instruction::LdR16Imm(reg_pair.into(), imm));
         self
     }
 
@@ -30,40 +29,45 @@ pub trait Assembler<Meta>
     /// `inc rr`
     /// 
     /// Increment register pair `rr`
-    fn inc_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
-        self.push_instruction(Instruction::IncR16(reg_pair));
+    fn inc_r16<T>(&mut self, reg_pair: T) -> &mut Self
+            where T: Into<RegisterPair> {
+        self.push_instruction(Instruction::IncR16(reg_pair.into()));
         self
     }
 
     /// `inc r`
     /// 
     /// Increment register `r`
-    fn inc_r8(&mut self, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::IncR8(reg));
+    fn inc_r8<T>(&mut self, reg: T) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(Instruction::IncR8(reg.into()));
         self
     }
 
     /// `dec r`
     /// 
     /// Decrement register `r`
-    fn dec_r8(&mut self, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::DecR8(reg));
+    fn dec_r8<T>(&mut self, reg: T) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(Instruction::DecR8(reg.into()));
         self
     }
     
     /// `ld r, n8`
     /// 
     /// Load the immediate `imm` into `reg`
-    fn ld_r8_imm(&mut self, reg: GpRegister, imm: u8) -> &mut Self {
-        self.push_instruction(Instruction::LdR8Imm(reg, imm));
+    fn ld_r8_imm<T>(&mut self, reg: T, imm: u8) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(Instruction::LdR8Imm(reg.into(), imm));
         self
     }
 
     /// `dec rr`
     /// 
     /// Decrement register pair `rr`
-    fn dec_r16(&mut self, reg_pair: RegisterPair) -> &mut Self {
-        self.push_instruction(Instruction::DecR16(reg_pair));
+    fn dec_r16<T>(&mut self, reg_pair: T) -> &mut Self
+            where T: Into<RegisterPair> {
+        self.push_instruction(Instruction::DecR16(reg_pair.into()));
         self
     }
 
@@ -86,24 +90,26 @@ pub trait Assembler<Meta>
     /// `ld r, r`
     /// 
     /// Load the byte in `src` into `dest`
-    fn ld_r8_from_r8(&mut self, dest: GpRegister, src: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::LdR8FromR8(dest, src));
+    fn ld_r8_from_r8<T, U>(&mut self, dest: T, src: U) -> &mut Self
+            where T: Into<GpRegister>, U: Into<GpRegister> {
+        self.push_instruction(Instruction::LdR8FromR8(dest.into(), src.into()));
         self
     }
 
     /// `cp a, r`
     /// 
     /// Subtract `r` from `a` without storing the result (still changes flags)
-    fn cp(&mut self, reg: GpRegister) -> &mut Self {
-        self.push_instruction(Instruction::Cp(reg));
+    fn cp<T>(&mut self, reg: T) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(Instruction::Cp(reg.into()));
         self
     }
 
     /// `pop rr`
     /// 
     /// Pops 2 bytes off the stack into `rr`
-    fn pop(&mut self, reg_pair: &StackPair) -> &mut Self {
-        self.push_instruction(Instruction::Pop(reg_pair.clone()));
+    fn pop(&mut self, reg_pair: StackPair) -> &mut Self {
+        self.push_instruction(Instruction::Pop(reg_pair));
         self
     }
 
@@ -118,8 +124,8 @@ pub trait Assembler<Meta>
     /// `push rr`
     /// 
     /// Pushes `rr` onto the stack
-    fn push(&mut self, reg_pair: &StackPair) -> &mut Self {
-        self.push_instruction(Instruction::Push(reg_pair.clone()));
+    fn push(&mut self, reg_pair: StackPair) -> &mut Self {
+        self.push_instruction(Instruction::Push(reg_pair));
         self
     }
 
@@ -141,7 +147,7 @@ pub trait Assembler<Meta>
 
     /// `ld [imm], a`
     /// 
-    /// Load the byte at the immediate 16-bit address into `a`
+    /// Load the byte in `a` into the immediate 16-bit address
     fn ld_a_to_ind(&mut self, imm: Addr) -> &mut Self {
         self.push_instruction(Instruction::LdAToInd(imm));
         self
@@ -165,7 +171,7 @@ pub trait Assembler<Meta>
 
     /// `ld a, [imm]`
     /// 
-    /// Load the byte in `a` into the immediate 16-bit address
+    /// Load the byte at the immediate 16-bit address into `a`
     fn ld_a_from_ind(&mut self, imm: Addr) -> &mut Self {
         self.push_instruction(Instruction::LdAFromInd(imm));
         self
@@ -174,24 +180,27 @@ pub trait Assembler<Meta>
     /// bit `bit`, `reg`
     /// 
     /// Tests bit `bit` of `reg`, setting the Zero flag if not set
-    fn bit(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
-        self.push_instruction(PrefixInstruction::Bit(bit, reg).into());
+    fn bit<T>(&mut self, reg: T, bit: Bit) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(PrefixInstruction::Bit(bit, reg.into()).into());
         self
     }
 
     /// res `bit`, `reg`
     /// 
     /// Resets bit `bit` of `reg`
-    fn res(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
-        self.push_instruction(PrefixInstruction::Res(bit, reg).into());
+    fn res<T>(&mut self, reg: T, bit: Bit) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(PrefixInstruction::Res(bit, reg.into()).into());
         self
     }
 
     /// set `bit`, `reg`
     /// 
     /// Sets bit `bit` of `reg`
-    fn set(&mut self, reg: GpRegister, bit: Bit) -> &mut Self {
-        self.push_instruction(PrefixInstruction::Set(bit, reg).into());
+    fn set<T>(&mut self, reg: T, bit: Bit) -> &mut Self
+            where T: Into<GpRegister> {
+        self.push_instruction(PrefixInstruction::Set(bit, reg.into()).into());
         self
     }
 
@@ -240,17 +249,44 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
     }
 
     fn copy(&mut self, src: Addr, dest: Addr, len: u16) -> Result<(), Error> {
-        let reg_hl = self.claim_reg_pair(RegisterPair::HL, Id::Unset);
-        let reg_a = self.claim_reg(GpRegister::A, Id::Unset);
-        self.ld_r16_imm(reg_hl.inner, dest);
+        let reg_hl = RegisterPair::HL;
+        let hl_stacked = if self.reg_is_used(RegisterPair::HL.into()) {
+            self.push(StackPair::HL);
+            true
+        } else {
+            false
+        };
+
+        let reg_a = GpRegister::A;
+        let a_stacked = if self.reg_is_used(GpRegister::A.into()) {
+            self.push(StackPair::AF);
+            true
+        } else {
+            false
+        };
         
-        let hl_var: RawVariable = RawRegVariable::from(reg_hl.inner).into();
+        self.ld_r16_imm(reg_hl, dest);
+        
+        let hl_var: RawVariable = RawRegVariable::from(reg_hl).into();
         let mut data_pointer = self.init_var16(src)?;
-        let block = self.loop_block(LoopCondition::Countup{ counter: hl_var , end: len });
+
+        let block = (|| {
+            if let Ok(len) = len.try_into() {
+                if let Ok(reg) = self.alloc_reg() {
+                    self.ld_r8_imm(&reg, len);
+                    let counter: RawVariable = RawRegVariable::from(reg.inner).into();
+                    return self.loop_block(LoopCondition::Countdown { counter, end: 0 });
+                }
+            }
+            self.loop_block(LoopCondition::Countup{ counter: hl_var , end: dest + len })
+        })();
 
         block.ld_a_from_var_ind(&mut data_pointer)?
             .ld_a_to_r16(IndirectPair::HLInc)
             .inc_var(&mut data_pointer)?;
+
+        if hl_stacked { self.pop(StackPair::HL); };
+        if  a_stacked { self.pop(StackPair::AF); };
 
         Ok(())
     }
@@ -264,11 +300,19 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
         Ok(())
     }
 
-    fn set_tilemap(&mut self, selector: TilemapSelector, tilemap: Tilemap) -> Result<(), Error> {
+    fn set_tilemap(&mut self, tilemap: TilemapSelector, data: Tilemap) -> Result<(), Error> {
         let block = self.basic_block();
-        let addr = block.new_stored_const((&tilemap).into())?;
-        block.copy(addr.addr, selector.base(), tilemap.len() as u16)?;
+        let addr = block.new_stored_const((&data).into())?;
+        block.copy(addr.addr, tilemap.base(), data.len() as u16)?;
 
+        Ok(())
+    }
+
+    /// `tile` is the tile in the map to set, `data` is the tile data to set it to
+    fn set_tile(&mut self, tilemap: TilemapSelector, tile: TileIdx, data: TileIdx) -> Result<(), Error> {
+        let src = self.init_var8(data)?;
+        let dest = tilemap.from_idx(tile);
+        self.ld_var_to_ind(&src, dest)?;
         Ok(())
     }
 
@@ -298,6 +342,48 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
             block.ldh_from_a(IoReg::Lcdc.into());
         });
     }
+
+    fn store_byte(&mut self, addr: Addr, value: u8) {
+        let reg = self.alloc_reg();
+
+        if let Ok(reg) = reg {
+            if reg.inner == GpRegister::A {
+                self.ld_r8_imm(reg.inner, value);
+
+                if addr > 0xff00 {
+                    self.ldh_from_a((addr & 0x00ff) as u8);
+                } else {
+                    self.ld_a_to_ind(addr);
+                }
+            } else {
+                self.ld_r8_from_r8(reg.inner, GpRegister::A);
+                self.ld_r8_imm(GpRegister::A, value);
+
+                if addr > 0xff00 {
+                    self.ldh_from_a((addr & 0x00ff) as u8);
+                } else {
+                    self.ld_a_to_ind(addr);
+                }
+
+                self.ld_r8_from_r8(GpRegister::A, reg.inner);
+            }
+        } else {
+            self.push(StackPair::AF);
+            self.ld_r8_imm(GpRegister::A, value);
+
+            if addr > 0xff00 {
+                self.ldh_from_a((addr & 0x00ff) as u8);
+            } else {
+                self.ld_a_to_ind(addr);
+            }
+
+            self.pop(StackPair::AF);
+        }
+    }
+
+    fn set_ioreg(&mut self, ioreg: IoReg, value: u8) {
+        self.store_byte(ioreg as u16, value);
+    }
     
     fn init_var8<T>(&mut self, value: T) -> Result<Variable, Error>
             where T: Clone + Copy + Into<u8> {
@@ -317,57 +403,6 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
         self.set_var(&mut var, &mut val_const)?;
         Ok(var)
     }
-    
-    fn alloc_reg(&self) -> Result<RcGpRegister, AllocError> {
-        self.allocator().borrow_mut().alloc_reg()
-    }
-
-    fn alloc_reg_pair(&self) -> Result<RcRegisterPair, AllocError> {
-        self.allocator().borrow_mut().alloc_reg_pair()
-    }
-
-    fn release_reg(&self, reg: RegSelector) {
-        self.allocator().borrow_mut().release_reg(reg);
-    }
-
-    /// Claims a specific register for the given ID
-    fn claim_reg(&self, reg: GpRegister, id: Id) -> RcGpRegister {
-        self.allocator().borrow_mut().claim_reg(reg, id)
-    }
-
-    /// Claims a specific register pair for the given ID
-    fn claim_reg_pair(&self, reg: RegisterPair, id: Id) -> RcRegisterPair {
-        self.allocator().borrow_mut().claim_reg_pair(reg, id)
-    }
-
-    /// Gets a specific register without changing its allocation status
-    fn get_reg(&self, reg: GpRegister) -> RcGpRegister {
-        self.allocator().borrow().get_reg(reg)
-    }
-
-    /// Gets a specific register pair without changing its allocation status
-    fn get_reg_pair(&self, reg: RegisterPair) -> RcRegisterPair {
-        self.allocator().borrow().get_reg_pair(reg)
-    }
-
-    /// Returns true if the selected register is unallocated
-    fn reg_is_used(&self, reg: RegSelector) -> bool {
-        self.allocator().borrow().reg_is_used(reg)
-    }
-
-    fn alloc_const(&self, len: u16) -> Result<Addr, AllocError> {
-        self.allocator().borrow_mut().alloc_const(len)
-    }
-
-    fn alloc_var(&self, len: u16) -> Result<Addr, AllocError> {
-        self.allocator().borrow_mut().alloc_var(len)
-    }
-
-    fn dealloc_var(&self, var: Variable) -> Result<(), AllocError> {
-        self.allocator().borrow_mut().dealloc_var(var)?;
-        Ok(())
-    }
-
 }
 
 pub trait Context {
