@@ -101,16 +101,17 @@ impl From<RawVariable> for Variable {
     }
 }
 
-impl From<Variable> for RawVariable {
-    fn from(value: Variable) -> Self {
-        match value {
-            Variable::Reg(RegVariable::Rc( RcRegVariable { inner, .. }))
-            | Variable::Reg(RegVariable::Raw(inner)) => Self::Reg(inner),
-            Variable::Memory(var) => Self::Memory(var),
-            Variable::Unallocated { len, id } => Self::Unallocated { len, id }
-        }
-    }
-}
+/// Should keep this conversion explicit (`Variable::into_raw()`) since it can prevent register deallocation
+// impl From<Variable> for RawVariable {
+//     fn from(value: Variable) -> Self {
+//         match value {
+//             Variable::Reg(RegVariable::Rc( RcRegVariable { inner, .. }))
+//             | Variable::Reg(RegVariable::Raw(inner)) => Self::Reg(inner),
+//             Variable::Memory(var) => Self::Memory(var),
+//             Variable::Unallocated { len, id } => Self::Unallocated { len, id }
+//         }
+//     }
+// }
 
 impl<T> From<T> for Variable where T: Into<RegVariable> {
     fn from(value: T) -> Self {

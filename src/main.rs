@@ -1,6 +1,6 @@
 use std::fs::File;
 
-use gleeby::{codegen::{variables::Variabler, Assembler, MacroAssembler}, cpu::instructions::Condition, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::{Tile, Tilemap}, TiledataSelector, TilemapSelector}, Cgb};
+use gleeby::{codegen::{allocator::GpRegisters, variables::Variabler, Assembler, MacroAssembler}, cpu::instructions::Condition, ppu::{palettes::{CgbPalette, Color, PaletteColor}, tiles::{Tile, Tilemap}, TiledataSelector, TilemapSelector}, Cgb};
 
 fn main() {
     let mut sys = Cgb::new();
@@ -17,15 +17,34 @@ fn main() {
         [0, 0, 0, 0, 0, 0, 0, 0]
     ]).expect("Someone did a silly >:#");
 
+    let regs = GpRegisters {
+        a: None,
+        b: None,
+        c: None,
+        d: None,
+        e: None,
+        h: None,
+        l: None,
+        bleh: None,
+    };
+
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
-    let regs = sys.disable_lcd_now();
-    assert_eq!(sys.allocator().borrow().registers.clone(), regs.borrow().registers.clone());
+
+    sys.disable_lcd_now();
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
+
     sys.set_palette(CgbPalette::_0, colors).unwrap();
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
+
     sys.write_tile_data(TiledataSelector::Tiledata8000, 1, &smiley).unwrap();
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
+    
     sys.write_tile_data(TiledataSelector::Tiledata8000, 2, &flat).unwrap();
+    assert_eq!(sys.allocator().borrow().registers.borrow().clone(), regs);
     dbg!(&sys.allocator().borrow().registers);
 
     let setter = |x, y| {

@@ -7,13 +7,13 @@ use super::{variables::{MemoryVariable, RawRegVariable, RegSelector, RegVariable
 #[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct GpRegisters {
     pub a: Option<(Id, Option<usize>)>,
-    b: Option<(Id, Option<usize>)>,
-    c: Option<(Id, Option<usize>)>,
-    d: Option<(Id, Option<usize>)>,
-    e: Option<(Id, Option<usize>)>,
-    h: Option<(Id, Option<usize>)>,
-    l: Option<(Id, Option<usize>)>,
-    bleh: Option<(Id, Option<usize>)>,
+    pub b: Option<(Id, Option<usize>)>,
+    pub c: Option<(Id, Option<usize>)>,
+    pub d: Option<(Id, Option<usize>)>,
+    pub e: Option<(Id, Option<usize>)>,
+    pub h: Option<(Id, Option<usize>)>,
+    pub l: Option<(Id, Option<usize>)>,
+    pub bleh: Option<(Id, Option<usize>)>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -109,6 +109,19 @@ impl Clone for RcRegVariable {
     }
 }
 
+impl Drop for RcRegVariable {
+    fn drop(&mut self) {
+        println!("Drop: {:#?}", self.inner);
+        match self.inner {
+            RawRegVariable::R8 { reg, .. }
+            | RawRegVariable::MemR8 { reg, .. } => self.allocator.borrow_mut().decrement_rc(reg.into()),
+            RawRegVariable::R16 { reg_pair, .. }
+            | RawRegVariable::MemR16 { reg_pair, .. } => self.allocator.borrow_mut().decrement_rc(reg_pair.into()),
+            _ => {},
+        };
+    }
+}
+
 impl Drop for RcGpRegister {
     fn drop(&mut self) {
         println!("Drop: {:#?}", self.inner);
@@ -118,6 +131,7 @@ impl Drop for RcGpRegister {
 
 impl Drop for RcRegisterPair {
     fn drop(&mut self) {
+        println!("Drop: {:#?}", self.inner);
         self.allocator.borrow_mut().decrement_rc(self.inner.into());
     }
 }
@@ -194,6 +208,8 @@ impl GpRegisters {
             Err(ConstAllocError::OutOfRegisters)?
         };
 
+        dbg!(inner);
+
         Ok(inner)
     }
 
@@ -257,12 +273,10 @@ impl GpRegisters {
     }
 
     pub(crate) fn increment_rc(&mut self, reg: RegSelector) {
-        println!("Increment {reg:#?}");
         self.crement_rc(reg, Crementivity::Up);
     }
 
     pub(crate) fn decrement_rc(&mut self, reg: RegSelector) {
-        println!("Decrement {reg:#?}");
         self.crement_rc(reg, Crementivity::Down);
     }
 
@@ -274,14 +288,9 @@ impl GpRegisters {
 
         match reg {
             RegSelector::R8(r8) => {
-                println!("{reg:#?} before crement: {:#?}", self[r8]);
                 self[r8] = self[r8].and_then(|(id, rc)| Some((id, rc.and_then(|rc| Some(rc.checked_add_signed(by).expect("That's a lotta cloning"))))));
                 if self[r8].is_some_and(|(_, rc)| rc == Some(0)) {
                     self.free(r8.into());
-                }
-                println!("{reg:#?} after crement: {:#?}", self[r8]);
-                if r8 == GpRegister::A {
-                    dbg!(self);
                 }
             }
             RegSelector::R16(r16) => {
@@ -337,8 +346,6 @@ impl Index<GpRegister> for GpRegisters {
 impl IndexMut<GpRegister> for GpRegisters {
     fn index_mut(&mut self, index: GpRegister) -> &mut Self::Output {
         use GpRegister::*;
-        println!("{index:#?} accessed mutably");
-
         match index {
             A => &mut self.a,
             B => &mut self.b,
@@ -482,9 +489,9 @@ impl Allocator<ConstAllocError> for ConstAllocator {
         self.variables.alloc(len)
     }
 
-    fn dealloc_var(&mut self, var: &Variable) -> Result<&mut Self, ConstAllocError> {
+    fn dealloc_var(&mut self, var: Variable) -> Result<&mut Self, ConstAllocError> {
         match var {
-            Variable::Memory(MemoryVariable { addr, .. }) => { self.variables.dealloc(*addr)?; },
+            Variable::Memory(MemoryVariable { addr, .. }) => { self.variables.dealloc(addr)?; },
             Variable::Reg(var) => match var {
                 RegVariable::Rc(var) => match var.inner {
                     RawRegVariable::R8 { reg, .. } => { self.registers.borrow_mut().decrement_rc(reg.clone().into()); },
@@ -499,7 +506,7 @@ impl Allocator<ConstAllocError> for ConstAllocator {
                     }
                     _ => {}
                 },
-                RegVariable::Raw(var) => match *var {
+                RegVariable::Raw(var) => match var {
                     RawRegVariable::R8 { reg, .. } => { self.registers.borrow_mut().free(reg.into()); }
                     RawRegVariable::R16 { reg_pair, .. } => { self.registers.borrow_mut().free(reg_pair.into()); } 
                     RawRegVariable::MemR8 { addr, reg, .. } => {
@@ -555,7 +562,7 @@ pub trait Allocator<AllocError>: std::fmt::Debug
     fn reg_is_used(&self, reg: RegSelector) -> bool;
     fn alloc_const(&mut self, len: u16) -> Result<Addr, AllocError>;
     fn alloc_var(&mut self, len: u16) -> Result<Addr, AllocError>;
-    fn dealloc_var(&mut self, var: &Variable) -> Result<&mut Self, AllocError>;
+    fn dealloc_var(&mut self, var: Variable) -> Result<&mut Self, AllocError>;
 }
 
 pub trait AllocErrorTrait: Clone + std::fmt::Debug {

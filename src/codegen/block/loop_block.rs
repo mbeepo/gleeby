@@ -34,9 +34,9 @@ pub enum LoopCondition {
     Native(Condition),
     // Constructed conditions
     /// Decrements `counter` until it reaches `end`, then stops iterating
-    Countdown { counter: RawVariable, end: u8 },
+    Countdown { counter: RawVariable, end: u16 },
     /// Increments `counter` until it reaches `end`, then stops iterating
-    Countup { counter: RawVariable, end: u8 },
+    Countup { counter: RawVariable, end: u16 },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,7 +87,8 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                 buffer.jr(condition, block_length as i8 * -1);
                 buffer
             },
-            LoopCondition::Countdown { ref counter, end } => {
+            LoopCondition::Countdown { ref counter, end }
+            | LoopCondition::Countup { ref counter, end } => {
                 if end == 0 {
                     let mut buffer = BasicBlock::<Meta>::new(allocator);
                     if let Err(err) = buffer.dec_var(&counter.clone().into()) {
@@ -110,22 +111,6 @@ impl<Meta> TryFrom<LoopBlock<Meta>> for Vec<u8>
                     todo!()
                 }
             },
-            LoopCondition::Countup { ref counter, end } => {
-                let mut buffer = BasicBlock::<Meta>::new(allocator);
-                if let Err(err) = buffer.inc_var(&counter.clone().into()) {
-                    errs.push(err);
-                }
-
-                let loop_length = block_length + buffer.len() + LoopBlock::<Meta>::JR_LEN;
-                    
-                if loop_length as isize * -1 < i8::MIN as isize {
-                    todo!("Loop body too big")
-                }
-
-
-                buffer.jr(Condition::Flag(CpuFlag::NZ), loop_length as i8 * -1);
-                buffer
-            }
         }.try_into();
 
         let mut out: Vec<u8> = value.inner.try_into()?;
