@@ -5,18 +5,12 @@ use crate::{
         allocator::{
             ConstAllocError,
             ConstAllocator
-        },
-        meta_instr::MetaInstructionTrait,
-        variables::{
+        }, assembler::BlockAssembler, meta_instr::MetaInstructionTrait, variables::{
             Constant,
             RawVariable,
             StoredConstant,
             Variabler
-        },
-        Assembler,
-        AssemblerError,
-        MacroAssembler,
-        Variable
+        }, Assembler, AssemblerError, MacroAssembler, Variable
     },
     cpu::{
         instructions::{
@@ -160,7 +154,7 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
     }
 }
 
-impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
+impl<Meta> BlockAssembler<Meta> for LoopBlock<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn basic_block(&mut self) -> &mut BasicBlock<Meta> {
         self.inner.basic_block()
@@ -170,7 +164,10 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<M
         self.inner.loop_block(condition);
         self
     }
+}
 
+impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for LoopBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, AssemblerError> {
         self.inner.new_stored_const(data)
     }

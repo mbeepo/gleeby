@@ -82,8 +82,9 @@ pub trait Assembler<Meta>
     /// `jr cc, e8`
     /// 
     /// Jump by `offset` bytes if `condition` is true
-    fn jr(&mut self, condition: Condition, offset: i8) -> &mut Self {
-        self.push_instruction(Instruction::Jr(condition, offset));
+    fn jr<T>(&mut self, condition: T, offset: i8) -> &mut Self
+            where T: Into<Condition> {
+        self.push_instruction(Instruction::Jr(condition.into(), offset));
         self
     }
 
@@ -211,14 +212,18 @@ pub trait Assembler<Meta>
     }
 }
 
-pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<Meta, Error, AllocError>
+pub trait BlockAssembler<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
+        /// [BasicBlock] builder
+    fn basic_block(&mut self) -> &mut BasicBlock<Meta>;
+    /// [LoopBlock] builder
+    fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<Meta>;
+}
+
+pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<Meta, Error, AllocError> + BlockAssembler<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait,
             Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + From<AssemblerError> + From<ConstAllocError> + ErrorTrait, // TODO: Not this
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait, {
-    /// [BasicBlock] builder
-    fn basic_block(&mut self) -> &mut BasicBlock<Meta>;
-    /// [Loop] builder
-    fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<Meta>;
     fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, Error>;
     fn new_inline_const_r8(&mut self, data: u8) -> Constant;
     fn new_inline_const_r16(&mut self, data: u16) -> Constant;
@@ -250,7 +255,7 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
 
     fn copy(&mut self, src: Addr, dest: Addr, len: u16) -> Result<(), Error> {
         let reg_hl = RegisterPair::HL;
-        let hl_stacked = if self.reg_is_used(RegisterPair::HL.into()) {
+        let hl_stacked = if self.reg_is_used(RegisterPair::HL) {
             self.push(StackPair::HL);
             true
         } else {
@@ -258,7 +263,7 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
         };
 
         let reg_a = GpRegister::A;
-        let a_stacked = if self.reg_is_used(GpRegister::A.into()) {
+        let af_stacked = if self.reg_is_used(GpRegister::A) {
             self.push(StackPair::AF);
             true
         } else {
@@ -285,8 +290,8 @@ pub trait MacroAssembler<Meta, Error, AllocError>: Assembler<Meta> + Variabler<M
             .ld_a_to_r16(IndirectPair::HLInc)
             .inc_var(&mut data_pointer)?;
 
-        if hl_stacked { self.pop(StackPair::HL); };
-        if  a_stacked { self.pop(StackPair::AF); };
+        if hl_stacked { self.pop(StackPair::HL); }
+        if af_stacked { self.pop(StackPair::AF); }
 
         Ok(())
     }

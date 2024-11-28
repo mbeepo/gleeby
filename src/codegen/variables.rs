@@ -2,7 +2,7 @@ use std::{cell::RefCell, fmt::Display, hash::Hash, rc::Rc};
 
 use crate::{codegen::allocator::RegKind, cpu::{CpuFlag, GpRegister, RegisterPair, SplitError, StackPair}, memory::Addr};
 
-use super::{allocator::{AllocErrorTrait, Allocator, RcGpRegister, RcRegVariable, RcRegisterPair}, assembler::ErrorTrait, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler};
+use super::{allocator::{AllocErrorTrait, Allocator, RcGpRegister, RcRegVariable, RcRegisterPair}, assembler::{BlockAssembler, ErrorTrait}, meta_instr::{MetaInstructionTrait, VarOrConst}, Assembler, BasicBlock};
 
 pub(crate) type IdInner = usize;
 
@@ -88,6 +88,17 @@ impl Variable {
             }
             Variable::Memory(var) => RawVariable::Memory(var),
         }
+    }
+}
+
+impl RegVariable {
+    pub fn inner(&self) -> RawRegVariable {
+        let raw = match self {
+            Self::Rc(rc) => rc.inner,
+            Self::Raw(inner) => *inner,
+        };
+
+        raw
     }
 }
 
@@ -179,7 +190,7 @@ impl From<RegisterPair> for RegSelector {
     }
 }
 
-pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
+pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta> + BlockAssembler<Meta>
         where Error: Clone + std::fmt::Debug + From<SplitError> + From<AllocError> + ErrorTrait,
             AllocError: Clone + std::fmt::Debug + Into<Error> + AllocErrorTrait,
             Meta: Clone + std::fmt::Debug + MetaInstructionTrait {
@@ -761,24 +772,57 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
         Ok(self)
     }
 
-    fn jr_z_var(&mut self, var: &Variable, imm: i8) -> Result<&mut Self, Error> {
+    fn jr_nz_var(&mut self, var: &Variable, imm: i8) -> Result<&mut Self, Error> {
         let reg = self.load_var(var)?;
+        let raw = reg.inner();
+    
+        match raw {
+            RawRegVariable::R8 { reg, .. }
+            | RawRegVariable::MemR8 { reg, .. } => {
+                let tmp = self.alloc_reg()?;
+                self.ld_r8_imm(&tmp, 0);
 
-        match reg {
-            RegVariable::Rc(RcRegVariable { inner: var, .. })
-            | RegVariable::Raw(var) => match var {
-                RawRegVariable::R8 { reg, .. }
-                | RawRegVariable::MemR8 { reg, .. } => {
-                    let tmp = self.allocator().borrow_mut().alloc_reg()?;
-                    if reg == GpRegister::A {
-                        self.cp(tmp.inner);
-                    } else if tmp == GpRegister::A {
-                        self.cp(reg);
+                if reg == GpRegister::A {
+                    self.cp(&tmp);
+                } else if tmp == GpRegister::A {
+                    self.cp(reg);
+                } else {
+                    let swap = if let Ok(swap) = self.alloc_reg() {
+                        self.ld_r8_from_r8(&swap, GpRegister::A);
+                        self.ld_r8_from_r8(GpRegister::A, reg);
+
+                        Some(swap)
+                    } else {
+                        self.push(StackPair::AF);
+                        self.ld_r8_from_r8(GpRegister::A, reg);
+
+                        None
+                    };
+
+                    if let Some(swap) = swap {
+                        self.ld_r8_from_r8(GpRegister::A, &swap);
+                    } else {
+                        self.pop(StackPair::AF);
                     }
-                    self.jr(CpuFlag::Z.into(), imm);
+
+                    self.cp(GpRegister::A);
                 }
-                _ => todo!()
+                self.jr(CpuFlag::NZ, imm);
             }
+            RawRegVariable::R16 { reg_pair, .. }
+            | RawRegVariable::MemR16 { reg_pair, .. } => {
+                // compare reg1
+                // jnz imm
+                // compare reg2
+                // jnz imm +/- block_length
+
+                let (reg1, reg2) = reg_pair.try_split()?;
+                let buffer = self.basic_block();
+                let _ = buffer.jr_nz_var(&RawRegVariable::from(reg1).into(), imm)?;
+                let block_length = buffer.len();
+
+            }
+            _ => todo!()
         }
 
         Ok(self)
@@ -807,8 +851,9 @@ pub trait Variabler<Meta, Error, AllocError>: Assembler<Meta>
     }
 
     /// Returns true if the selected register is unallocated
-    fn reg_is_used(&self, reg: RegSelector) -> bool {
-        self.allocator().borrow().reg_is_used(reg)
+    fn reg_is_used<T>(&self, reg: T) -> bool
+            where T: Into<RegSelector> {
+        self.allocator().borrow().reg_is_used(reg.into())
     }
 
     fn alloc_const(&self, len: u16) -> Result<Addr, AllocError> {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::codegen::allocator::{Allocator, ConstAllocError, ConstAllocator};
-use crate::codegen::assembler::Context;
+use crate::codegen::assembler::{BlockAssembler, Context};
 use crate::codegen::meta_instr::MetaInstructionTrait;
 use crate::codegen::variables::{Constant, StoredConstant, Variabler};
 use crate::codegen::{Assembler, AssemblerError, Id, LoopCondition, MacroAssembler};
@@ -123,7 +123,7 @@ impl<Meta> Variabler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
     }
 }
 
-impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
+impl<Meta> BlockAssembler<Meta> for BasicBlock<Meta>
         where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn basic_block(&mut self) -> &mut BasicBlock<Meta> {
         let block: BasicBlock<Meta> = BasicBlock::new(self.allocator.clone());
@@ -146,7 +146,10 @@ impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<
             unreachable!()
         }
     }
+}
 
+impl<Meta> MacroAssembler<Meta, AssemblerError, ConstAllocError> for BasicBlock<Meta>
+        where Meta: Clone + std::fmt::Debug + MetaInstructionTrait, {
     fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, AssemblerError> {
         let addr = self.allocator.borrow_mut().alloc_const(data.len() as u16)?;
         let id = self.new_id();

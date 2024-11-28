@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::{fs::File, io};
 
 use super::allocator::{ConstAllocError, ConstAllocator};
-use super::assembler::Context;
+use super::assembler::{BlockAssembler, Context};
 use super::meta_instr::MetaInstruction;
 use super::variables::{Constant, IdInner, StoredConstant, Variabler};
 use super::{Assembler, AssemblerError, BasicBlock, LoopBlock, LoopCondition, MacroAssembler};
@@ -94,7 +94,7 @@ impl Variabler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     }
 }
 
-impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
+impl BlockAssembler<MetaInstruction> for Cgb {
     /// [BasicBlock] builder
     fn basic_block(&mut self) -> &mut BasicBlock<MetaInstruction> {
         self.inner.basic_block()
@@ -104,7 +104,9 @@ impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     fn loop_block(&mut self, condition: LoopCondition) -> &mut LoopBlock<MetaInstruction> {
         self.inner.loop_block(condition)
     }
+}
 
+impl MacroAssembler<MetaInstruction, AssemblerError, ConstAllocError> for Cgb {
     fn new_stored_const(&mut self, data: &[u8]) -> Result<StoredConstant, AssemblerError> {
         self.inner.new_stored_const(data)
     }
